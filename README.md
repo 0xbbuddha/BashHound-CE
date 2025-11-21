@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./img/bashhoundlogo.png" alt="BashHound Logo" width="200"/>
+  <img src="./img/bashhound_ce_logo.png" alt="BashHound Logo" width="200"/>
   
   # BashHound-CE
 
