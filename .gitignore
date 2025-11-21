@@ -1,0 +1,11 @@
+# Temporary files
+*_collected_*
+*_bloodhound_*.json
+*_bloodhound_*.zip
+
+# Editor files
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
