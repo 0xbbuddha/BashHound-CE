@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+
+# BashHound - by 0xbbuddha
+# Active Directory data collector for BloodHound written in Bash - Alternative to SharpHound and RutHound
+
+# Disabled to allow the script to continue in case of LDAP errors
+# set -euo pipefail
+# set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/ldap.sh"
+source "$SCRIPT_DIR/lib/collectors.sh"
+source "$SCRIPT_DIR/lib/export_ce.sh"
+
+DOMAIN=""
+USERNAME=""
+PASSWORD=""
+LDAP_SERVER=""
+LDAP_PORT="389"
+USE_LDAPS=false
+OUTPUT_FILE=""
+COLLECTION_METHOD="All"
+ZIP_ONLY=false
+VERBOSE=false
+
+show_usage() {
+    cat <<EOF
+BashHound-CE - BloodHound Community Edition collector in pure Bash
+
+Usage: $0 [options]
+
+Options obligatoires:
+    -d, --domain DOMAIN          Domaine Active Directory (ex: domain.local)
+    -u, --user USERNAME          Nom d'utilisateur
+    -p, --password PASSWORD      Mot de passe
+    -s, --server SERVER          Serveur LDAP / Domain Controller
+
+Options facultatives:
+    -o, --output FILE            Fichier de sortie (défaut: bloodhound_TIMESTAMP.json)
+    -c, --collection METHOD      Méthode de collection (défaut: All)
+                                 Valeurs: All, DCOnly, Session, LoggedOn, Trusts, ACL, Group
+    --zip-only                   Supprime les fichiers JSON après création du ZIP
+    --port PORT                  Port LDAP (défaut: 389 pour LDAP, 636 pour LDAPS)
+    --ldaps                      Utilise LDAPS (TLS) - équivalent à --port 636
+    --no-tls                     Force LDAP sans TLS même sur port 636
+    -v, --verbose                Mode verbeux (affiche tous les messages)
+    -h, --help                   Affiche cette aide
+
+Exemples:
+    # LDAP standard (port 389)
+    $0 -d domain.local -u administrator -p Password123 -s dc01.domain.local
+    
+    # LDAPS avec TLS (port 636)
+    $0 -d domain.local -u administrator -p Password123 -s dc01.domain.local --ldaps
+    $0 -d corp.local -u admin -p Pass123! -s 192.168.1.10 --port 636
+    
+    # Avec options avancées
+    $0 -d corp.local -u user@corp.local -p Pass123! -s 192.168.1.10 --ldaps -o data.json
+
+Collection Methods:
+    All       - Collecte toutes les données (par défaut)
+    DCOnly    - Collecte uniquement depuis le DC (pas de sessions)
+    Session   - Collecte uniquement les sessions
+    Trusts    - Collecte uniquement les trusts
+    ACL       - Collecte uniquement les ACLs
+    Group     - Collecte uniquement les appartenances aux groupes
+
+EOF
+}
+
+parse_arguments() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -d|--domain)
+                DOMAIN="$2"
+                shift 2
+                ;;
+            -u|--user)
+                USERNAME="$2"
+                shift 2
+                ;;
+            -p|--password)
+                PASSWORD="$2"
+                shift 2
+                ;;
+            -s|--server)
+                LDAP_SERVER="$2"
+                shift 2
+                ;;
+            -o|--output)
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            -c|--collection)
+                COLLECTION_METHOD="$2"
+                shift 2
+                ;;
+            --port)
+                LDAP_PORT="$2"
+                shift 2
+                ;;
+            --ldaps)
+                USE_LDAPS=true
+                LDAP_PORT="636"
+                shift
+                ;;
+            --zip-only)
+                ZIP_ONLY=true
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                export LDAP_VERBOSE=true
+                shift
+                ;;
+            --no-tls)
+                USE_LDAPS=false
+                shift
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Option inconnue: $1" >&2
+                show_usage
+                exit 1
+                ;;
+        esac
+    done
+    
+    if [ -z "$DOMAIN" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$LDAP_SERVER" ]; then
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Tous les paramètres obligatoires doivent être fournis" >&2
+        show_usage
+        exit 1
+    fi
+    
+    if [ -z "$OUTPUT_FILE" ]; then
+        OUTPUT_FILE="bloodhound_$(date +%Y%m%d_%H%M%S).json"
+    fi
+}
+
+show_banner() {
+    local bashhound_color='\033[38;2;0;229;142m'
+    local ce_color='\033[38;2;255;165;0m'
+    local author_color='\033[38;2;207;51;246m'
+    local reset='\033[0m'
+    
+    echo -e "${bashhound_color}    ____             __    __  __                      __${reset}     ${ce_color}____________${reset}"
+    echo -e "${bashhound_color}   / __ )____ ______/ /_  / / / /___  __  ______  ____/ /${reset}    ${ce_color}/ ____/ ____/${reset}"
+    echo -e "${bashhound_color}  / __  / __ \`/ ___/ __ \/ /_/ / __ \/ / / / __ \/ __  /${reset}    ${ce_color}/ /   / __/${reset}"
+    echo -e "${bashhound_color} / /_/ / /_/ (__  ) / / / __  / /_/ / /_/ / / / / /_/ /${reset}    ${ce_color}/ /___/ /___${reset}"
+    echo -e "${bashhound_color}/_____/\__,_/____/_/ /_/_/ /_/\____/\__,_/_/ /_/\__,_/${reset}     ${ce_color}\____/_____/${reset}"
+    echo -e ""
+    echo -e "${bashhound_color}BloodHound${reset} ${ce_color}Community Edition${reset} collector in pure Bash - by ${author_color}0xbbuddha${reset}"
+    echo ""
+}
+
+main() {
+    show_banner
+    
+    parse_arguments "$@"
+    
+    if [ "$LDAP_PORT" = "636" ] && [ "$USE_LDAPS" = "false" ]; then
+        USE_LDAPS=true
+    fi
+    
+    local protocol="LDAP"
+    if [ "$USE_LDAPS" = "true" ]; then
+        protocol="LDAPS (TLS)"
+    fi
+    
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Verbosity level: $([ "$VERBOSE" = "true" ] && echo "Debug" || echo "Info")"
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Connecting to $DOMAIN Active Directory..."
+    
+    local use_tls="false"
+    if [ "$USE_LDAPS" = "true" ]; then
+        use_tls="true"
+    fi
+    
+    if [ "$VERBOSE" = "true" ]; then
+        ldap_connect "$LDAP_SERVER" "$LDAP_PORT" "$use_tls"
+    else
+        local tmplog="/tmp/bashhound_log_$$"
+        ldap_connect "$LDAP_SERVER" "$LDAP_PORT" "$use_tls" 2>"$tmplog"
+        grep -vE "INFO:|DEBUG:" "$tmplog" >&2 2>/dev/null || true
+        rm -f "$tmplog"
+    fi
+    
+    if [ -z "$LDAP_FD" ] || [ "$LDAP_FD" = "" ]; then
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Impossible de se connecter au serveur LDAP" >&2
+        exit 1
+    fi
+    
+    local bind_dn="$USERNAME"
+    
+    if [[ ! "$bind_dn" =~ @ ]] && [[ ! "$bind_dn" =~ ^CN= ]]; then
+        bind_dn="CN=$USERNAME,CN=Users,$(echo "$DOMAIN" | sed 's/\./,DC=/g' | sed 's/^/DC=/')"
+    fi
+    
+    if [ "$VERBOSE" = "true" ]; then
+        ldap_bind "$bind_dn" "$PASSWORD"
+    else
+        local tmplog="/tmp/bashhound_log_$$"
+        ldap_bind "$bind_dn" "$PASSWORD" 2>"$tmplog"
+        grep -vE "INFO:|DEBUG:" "$tmplog" >&2 2>/dev/null || true
+        rm -f "$tmplog"
+    fi
+    
+    if [ $? -ne 0 ]; then
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Authentication failed" >&2
+        ldap_disconnect
+        exit 1
+    fi
+    
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Connected to $DOMAIN Active Directory!"
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting data collection..."
+    
+    local raw_data=""
+    
+    case "$COLLECTION_METHOD" in
+        All|all|ALL)
+            if [ "$VERBOSE" = "true" ]; then
+                collector_init_domain "$DOMAIN" 2>&1
+                collect_domain_info 2>&1 || true
+                collect_users 2>&1 || true
+                collect_groups 2>&1 || true
+                collect_computers 2>&1 || true
+                collect_gpos 2>&1 || true
+                collect_ous 2>&1 || true
+                collect_containers 2>&1 || true
+                collect_trusts 2>&1 || true
+            else
+                collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
+                collect_domain_info >/dev/null 2>&1 || true
+                collect_users >/dev/null 2>&1 || true
+                collect_groups >/dev/null 2>&1 || true
+                collect_computers >/dev/null 2>&1 || true
+                collect_gpos >/dev/null 2>&1 || true
+                collect_ous >/dev/null 2>&1 || true
+                collect_containers >/dev/null 2>&1 || true
+                collect_trusts >/dev/null 2>&1 || true
+            fi
+            ;;
+        DCOnly|dconly)
+            if [ "$VERBOSE" = "true" ]; then
+                collector_init_domain "$DOMAIN" 2>&1
+                collect_domain_info 2>&1 || true
+                collect_users 2>&1 || true
+                collect_groups 2>&1 || true
+                collect_computers 2>&1 || true
+                collect_gpos 2>&1 || true
+                collect_ous 2>&1 || true
+                collect_containers 2>&1 || true
+                collect_trusts 2>&1 || true
+            else
+                collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
+                collect_domain_info >/dev/null 2>&1 || true
+                collect_users >/dev/null 2>&1 || true
+                collect_groups >/dev/null 2>&1 || true
+                collect_computers >/dev/null 2>&1 || true
+                collect_gpos >/dev/null 2>&1 || true
+                collect_ous >/dev/null 2>&1 || true
+                collect_containers >/dev/null 2>&1 || true
+                collect_trusts >/dev/null 2>&1 || true
+            fi
+            ;;
+        Trusts|trusts)
+            if [ "$VERBOSE" = "true" ]; then
+                collector_init_domain "$DOMAIN" 2>&1
+                collect_trusts 2>&1 || true
+            else
+                collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
+                collect_trusts >/dev/null 2>&1 || true
+            fi
+            ;;
+        *)
+            echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Méthode de collection inconnue, utilisation de 'All'" >&2
+            if [ "$VERBOSE" = "true" ]; then
+                collector_init_domain "$DOMAIN" 2>&1
+                collect_users 2>&1 || true
+            else
+                collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
+                collect_users >/dev/null 2>&1 || true
+            fi
+            ;;
+    esac
+    
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] All data collected for NamingContext DC=$(echo "$DOMAIN" | tr '.' ',DC=')"
+    ldap_unbind 2>&1 | grep -v "INFO:" >&2
+    
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting the LDAP objects parsing..."
+    
+    local output_prefix="bloodhound"
+    local created_files=($(export_create_json_files "$DOMAIN" "$output_prefix" 2>&1 | grep -v "INFO:"))
+    
+    local users_count=$(jq '.meta.count' bloodhound_users_*.json 2>/dev/null | head -1 || echo 0)
+    local groups_count=$(jq '.meta.count' bloodhound_groups_*.json 2>/dev/null | head -1 || echo 0)
+    local computers_count=$(jq '.meta.count' bloodhound_computers_*.json 2>/dev/null | head -1 || echo 0)
+    local domains_count=$(jq '.meta.count' bloodhound_domains_*.json 2>/dev/null | head -1 || echo 0)
+    local gpos_count=$(jq '.meta.count' bloodhound_gpos_*.json 2>/dev/null | head -1 || echo 0)
+    local ous_count=$(jq '.meta.count' bloodhound_ous_*.json 2>/dev/null | head -1 || echo 0)
+    local containers_count=$(jq '.meta.count' bloodhound_containers_*.json 2>/dev/null | head -1 || echo 0)
+    
+    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Parsing LDAP objects finished!"
+    
+    if [ ${#created_files[@]} -gt 0 ]; then
+        local timestamp=$(date +%Y%m%d_%H%M%S)
+        local domain_clean=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | tr '.' '-')
+        local zip_filename="${timestamp}_${domain_clean}_bashhound.zip"
+        if command -v zip >/dev/null 2>&1; then
+            zip -q "$zip_filename" "${created_files[@]}" 2>/dev/null
+            if [ $? -eq 0 ]; then
+                local bashhound_color='\033[38;2;0;229;142m'
+                local reset='\033[0m'
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $users_count users parsed!"
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $groups_count groups parsed!"
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $computers_count computers parsed!"
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $ous_count ous parsed!"
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $domains_count domains parsed!"
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $gpos_count gpos parsed!"
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $containers_count containers parsed!"
+                
+                local trusts_count=$(jq '[.data[].Trusts | length] | add' bloodhound_domains_*.json 2>/dev/null || echo 0)
+                if [ "$trusts_count" -gt 0 ]; then
+                    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $trusts_count domain trust(s) found!"
+                fi
+                
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $zip_filename created!"
+                echo ""
+                echo -e "${bashhound_color}BashHound-CE${reset} Enumeration Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
+                
+                if [ "$ZIP_ONLY" = "true" ]; then
+                    rm -f "${created_files[@]}"
+                fi
+            else
+                echo "[!] WARN: Échec de la création du ZIP, fichiers JSON conservés" >&2
+                for file in "${created_files[@]}"; do
+                    local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
+                    echo "      - $file ($file_size octets)"
+                done
+            fi
+        else
+            echo "[!] WARN: 'zip' non trouvé, fichiers JSON individuels conservés" >&2
+            echo "═══════════════════════════════════════════════════════════"
+            echo "[+] Collecte terminée avec succès !"
+            echo "    Fichiers créés :"
+            for file in "${created_files[@]}"; do
+                local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
+                echo "      - $file ($file_size octets)"
+            done
+            echo "═══════════════════════════════════════════════════════════"
+            echo ""
+            echo "Vous pouvez maintenant importer ces fichiers dans BloodHound."
+            echo "Installez 'zip' pour créer automatiquement une archive."
+        fi
+    else
+        echo "[!] WARN: Aucune donnée collectée" >&2
+        echo "═══════════════════════════════════════════════════════════"
+    fi
+}
+
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi
+
+
