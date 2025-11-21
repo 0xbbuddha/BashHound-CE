@@ -6,7 +6,7 @@
   **Active Directory data collector for BloodHound Community Edition written in Bash**
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-  [![BashHound](https://img.shields.io/badge/Tool-BashHound-00E68E.svg)](https://github.com/0xbbuddha/BashHound)
+  [![BashHound](https://img.shields.io/badge/Tool-BashHound-00E2E8.svg)](https://github.com/0xbbuddha/BashHound)
 
 
   *Bash • Fast • Stealth*
