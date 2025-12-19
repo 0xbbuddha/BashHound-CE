@@ -148,8 +148,8 @@ show_banner() {
     
     echo -e "${bashhound_color}    ____             __    __  __                      __${reset}     ${ce_color}____________${reset}"
     echo -e "${bashhound_color}   / __ )____ ______/ /_  / / / /___  __  ______  ____/ /${reset}    ${ce_color}/ ____/ ____/${reset}"
-    echo -e "${bashhound_color}  / __  / __ \`/ ___/ __ \/ /_/ / __ \/ / / / __ \/ __  /${reset}    ${ce_color}/ /   / __/${reset}"
-    echo -e "${bashhound_color} / /_/ / /_/ (__  ) / / / __  / /_/ / /_/ / / / / /_/ /${reset}    ${ce_color}/ /___/ /___${reset}"
+    echo -e "${bashhound_color}  / __  / __ \`/ ___/ __ \/ /_/ / __ \/ / / / __ \/ __  /${reset}____${ce_color}/ /   / __/${reset}"
+    echo -e "${bashhound_color} / /_/ / /_/ (__  ) / / / __  / /_/ / /_/ / / / / /_/ /${reset}____${ce_color}/ /___/ /___${reset}"
     echo -e "${bashhound_color}/_____/\__,_/____/_/ /_/_/ /_/\____/\__,_/_/ /_/\__,_/${reset}     ${ce_color}\____/_____/${reset}"
     echo -e ""
     echo -e "${bashhound_color}BloodHound${reset} ${ce_color}Community Edition${reset} collector in pure Bash - by ${author_color}0xbbuddha${reset}"
