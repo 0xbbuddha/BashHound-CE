@@ -89,12 +89,23 @@ collect_users() {
             local sid=$(extract_sid_from_response "$line")
             local primary_gid=$(extract_primary_group_id "$line")
             
+            # DEBUG: Save first user response for analysis
+            if [ "$count" -eq 0 ] && [ -n "$sam" ]; then
+                echo "$line" > "/tmp/bashhound_debug_user_response.hex"
+                [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: Saved user response to /tmp/bashhound_debug_user_response.hex" >&2
+            fi
+            
             local description=$(extract_attribute_value "$line" "description")
             local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
             local last_logon=$(extract_filetime_timestamp "$line" "lastLogon")
             local last_logon_ts=$(extract_filetime_timestamp "$line" "lastLogontimestamp")
             local pwd_last_set=$(extract_filetime_timestamp "$line" "pwdLastSet")
             local uac=$(extract_uac_flags "$line")
+            
+            # DEBUG: Log extracted values
+            if [ "$count" -eq 0 ] && [ -n "$sam" ]; then
+                [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: User $sam - whenCreated=$when_created, primaryGID=$primary_gid, UAC=$uac" >&2
+            fi
             local admin_count=$(extract_attribute_value "$line" "adminCount")
             
             local spns=$(extract_multi_valued_attribute "$line" "servicePrincipalName")
