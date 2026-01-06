@@ -56,7 +56,7 @@ build_aces_json() {
             local principal_type=$(resolve_principal_type "$principal_sid")
             
             local ace_json=$(cat <<ACEJSON
-{"PrincipalSID":"$principal_sid","PrincipalType":"$principal_type","RightName":"$right_name","IsInherited":$is_inherited}
+{"PrincipalSID":"$principal_sid","PrincipalType":"$principal_type","RightName":"$right_name","IsInherited":$is_inherited,"InheritanceHash":""}
 ACEJSON
 )
             ace_objs+=("$ace_json")
@@ -221,46 +221,51 @@ export_create_json_files() {
   "ObjectIdentifier": "$sid",
   "IsDeleted": false,
   "IsACLProtected": false,
-  "ContainedBy": null,
   "Properties": {
     "domain": "$domain_upper",
     "name": "$user_name_upper",
     "domainsid": "$domain_sid",
-    "highvalue": $admin_count_bool,
+    "isaclprotected": false,
     "distinguishedname": "$dn_upper",
-    "unconstraineddelegation": $uac_trusted_for_delegation,
-    "trustedtoauth": $uac_trusted_to_auth,
+    "highvalue": false,
+    "description": $desc_json,
+    "whencreated": $when_created,
+    "sensitive": false,
+    "dontreqpreauth": $uac_dont_req_preauth,
     "passwordnotreqd": $uac_pwd_not_reqd,
+    "unconstraineddelegation": $uac_trusted_for_delegation,
+    "pwdneverexpires": $uac_pwd_never_expires,
     "enabled": $uac_enabled,
+    "trustedtoauth": $uac_trusted_to_auth,
     "lastlogon": $last_logon,
     "lastlogontimestamp": $last_logon_ts,
     "pwdlastset": $pwd_last_set,
-    "dontreqpreauth": $uac_dont_req_preauth,
-    "pwdneverexpires": $uac_pwd_never_expires,
-    "sensitive": false,
     "serviceprincipalnames": $spns_json,
     "hasspn": $has_spn,
-    "displayname": null,
-    "email": null,
-    "title": null,
-    "homedirectory": null,
-    "description": $desc_json,
-    "userpassword": null,
-    "admincount": $admin_count_bool,
-    "sidhistory": [],
-    "whencreated": $when_created,
-    "unixpassword": null,
-    "unicodepassword": null,
-    "logonscript": null,
+    "displayname": "",
+    "email": "",
+    "title": "",
+    "homedirectory": "",
+    "logonscript": "",
+    "useraccountcontrol": ${uac:-0},
     "samaccountname": "$sam",
-    "sfupassword": null,
-    "isaclprotected": false
+    "userpassword": "",
+    "unixpassword": "",
+    "unicodepassword": "",
+    "sfupassword": "",
+    "admincount": $admin_count_bool,
+    "supportedencryptiontypes": [],
+    "sidhistory": [],
+    "allowedtodelegate": []
   },
   "PrimaryGroupSID": $primary_group_sid,
-  "AllowedToDelegate": [],
-  "HasSIDHistory": [],
   "SPNTargets": [],
-  "Aces": $aces_json
+  "UnconstrainedDelegation": $uac_trusted_for_delegation,
+  "DomainSID": "$domain_sid",
+  "Aces": $aces_json,
+  "AllowedToDelegate": [],
+  "ContainedBy": null,
+  "HasSIDHistory": []
 }
 USEREOF
 )")
@@ -281,7 +286,8 @@ USEREOF
     "methods": 0,
     "type": "users",
     "count": $user_count,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
@@ -384,7 +390,8 @@ GROUPEOF
     "methods": 0,
     "type": "groups",
     "count": $group_count,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
@@ -423,10 +430,18 @@ EOF
                 local uac_enabled="true"
                 local uac_trusted_for_delegation="false"
                 local uac_trusted_to_auth="false"
+                local uac_pwd_not_reqd="false"
+                local uac_pwd_never_expires="false"
                 
                 if [ -n "$uac" ] && [ "$uac" != "0" ]; then
                     if (( uac & 2 )); then
                         uac_enabled="false"
+                    fi
+                    if (( uac & 32 )); then
+                        uac_pwd_not_reqd="true"
+                    fi
+                    if (( uac & 65536 )); then
+                        uac_pwd_never_expires="true"
                     fi
                     if (( uac & 524288 )); then
                         uac_trusted_for_delegation="true"
@@ -434,6 +449,13 @@ EOF
                     if (( uac & 16777216 )); then
                         uac_trusted_to_auth="true"
                     fi
+                fi
+                
+                local is_dc="false"
+                local dc_registry_data="null"
+                if [[ "$dn_upper" == *"OU=DOMAIN CONTROLLERS"* ]]; then
+                    is_dc="true"
+                    dc_registry_data='{"CertificateMappingMethods":null,"StrongCertificateBindingEnforcement":null}'
                 fi
                 
                 [ -z "$when_created" ] && when_created="-1"
@@ -463,41 +485,48 @@ EOF
   "ObjectIdentifier": "$sid",
   "IsDeleted": false,
   "IsACLProtected": false,
-  "ContainedBy": null,
-  "DumpSMSAPassword": [],
   "Properties": {
-    "name": "${comp_name_upper}.${domain_upper}",
-    "domainsid": "$domain_sid",
-    "domain": "$domain_upper",
-    "highvalue": false,
+    "description": $desc_json,
     "distinguishedname": "$dn_upper",
-    "unconstraineddelegation": $uac_trusted_for_delegation,
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid",
     "enabled": $uac_enabled,
-    "trustedtoauth": $uac_trusted_to_auth,
+    "haslaps": false,
+    "highvalue": false,
+    "isaclprotected": false,
     "lastlogon": $last_logon,
     "lastlogontimestamp": $last_logon_ts,
-    "pwdlastset": $pwd_last_set,
-    "haslaps": false,
-    "description": $desc_json,
-    "whencreated": $when_created,
-    "serviceprincipalnames": $spns_json,
+    "name": "${comp_name_upper}.${domain_upper}",
     "operatingsystem": $os_json,
-    "sidhistory": [],
+    "passwordnotreqd": $uac_pwd_not_reqd,
+    "pwdlastset": $pwd_last_set,
+    "pwdneverexpires": $uac_pwd_never_expires,
     "samaccountname": "$sam",
-    "isaclprotected": false
+    "serviceprincipalnames": $spns_json,
+    "sidhistory": [],
+    "supportedencryptiontypes": [],
+    "trustedtoauth": $uac_trusted_to_auth,
+    "unconstraineddelegation": $uac_trusted_for_delegation,
+    "whencreated": $when_created
   },
   "PrimaryGroupSID": $primary_group_sid,
   "LocalGroups": [],
-  "UserRights": [],
-  "AllowedToDelegate": [],
-  "AllowedToAct": [],
-  "Status": null,
-  "HasSIDHistory": [],
   "Sessions": {
     "Results": [],
-    "Collected": false,
+    "Collected": true,
     "FailureReason": null
   },
+  "Status": null,
+  "UnconstrainedDelegation": $uac_trusted_for_delegation,
+  "DomainSID": "$domain_sid",
+  "Aces": $aces_json,
+  "AllowedToAct": [],
+  "AllowedToDelegate": [],
+  "ContainedBy": null,
+  "DCRegistryData": $dc_registry_data,
+  "DumpSMSAPassword": [],
+  "HasSIDHistory": [],
+  "IsDC": $is_dc,
   "PrivilegedSessions": {
     "Results": [],
     "Collected": false,
@@ -508,7 +537,7 @@ EOF
     "Collected": false,
     "FailureReason": null
   },
-  "Aces": $aces_json
+  "UserRights": []
 }
 COMPEOF
 )")
@@ -529,7 +558,8 @@ COMPEOF
     "methods": 0,
     "type": "computers",
     "count": $computer_count,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
@@ -664,21 +694,30 @@ TRUSTEOF
   "data": [
     {
       "ObjectIdentifier": "$domain_sid",
-      "IsACLProtected": false,
       "IsDeleted": false,
+      "IsACLProtected": false,
       "Properties": {
         "domain": "$domain_upper",
         "name": "$domain_upper",
         "distinguishedname": "$domain_dn",
         "domainsid": "$domain_sid",
-        "description": null,
-        "highvalue": true,
         "isaclprotected": false,
-        "collected": true,
+        "highvalue": true,
+        "description": null,
         "whencreated": -1,
-        "functionallevel": "Unknown"
+        "machineaccountquota": 10,
+        "expirepasswordsonsmartcardonlyaccounts": true,
+        "minpwdlength": 7,
+        "pwdproperties": 1,
+        "pwdhistorylength": 24,
+        "lockoutthreshold": 0,
+        "minpwdage": "1 day",
+        "maxpwdage": "6 weeks",
+        "lockoutduration": "10 minutes",
+        "lockoutobservationwindow": -6000000000,
+        "functionallevel": "Unknown",
+        "collected": true
       },
-      "ChildObjects": $child_objects_json,
       "Trusts": $trusts_json,
       "Aces": $(build_aces_json "$domain_sid"),
       "GPOChanges": {
@@ -688,13 +727,17 @@ TRUSTEOF
         "PSRemoteUsers": [],
         "AffectedComputers": []
       },
-      "Links": []
+      "ChildObjects": $child_objects_json,
+      "Links": [],
+      "ContainedBy": null
     }
   ],
   "meta": {
+    "methods": 0,
     "type": "domains",
     "count": 1,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
@@ -764,7 +807,8 @@ GPOEOF
     "methods": 0,
     "type": "gpos",
     "count": $gpo_count,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
@@ -860,7 +904,8 @@ OUEOF
     "methods": 0,
     "type": "ous",
     "count": $ou_count,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
@@ -921,7 +966,8 @@ CONTAINEREOF
     "methods": 0,
     "type": "containers",
     "count": $container_count,
-    "version": 6
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
