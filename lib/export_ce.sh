@@ -54,7 +54,8 @@ resolve_contained_by() {
     fi
     
     # Chercher le parent dans les OUs
-    local ous_file="/tmp/bashhound_ous_$$"
+    # Use exported variable from collectors.sh if available, otherwise fallback to PID-based path
+    local ous_file="${COLLECTED_OUS:-/tmp/bashhound_ous_$$}"
     if [ -f "$ous_file" ] && [ -s "$ous_file" ]; then
         while IFS='|' read -r ou_dn ou_name gplink blocks_inheritance description; do
             if [ -n "$ou_dn" ]; then
@@ -70,7 +71,8 @@ resolve_contained_by() {
     fi
     
     # Chercher le parent dans les Containers
-    local containers_file="/tmp/bashhound_containers_$$"
+    # Use exported variable from collectors.sh if available, otherwise fallback to PID-based path
+    local containers_file="${COLLECTED_CONTAINERS:-/tmp/bashhound_containers_$$}"
     if [ -f "$containers_file" ] && [ -s "$containers_file" ]; then
         while IFS='|' read -r container_dn container_name description; do
             if [ -n "$container_dn" ]; then

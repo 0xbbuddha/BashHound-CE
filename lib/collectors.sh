@@ -22,7 +22,11 @@ COLLECTED_CONTAINERS="/tmp/bashhound_containers_$$"
 COLLECTED_TRUSTS="/tmp/bashhound_trusts_$$"
 COLLECTED_ACES="/tmp/bashhound_aces_$$"
 
-trap 'rm -f "$COLLECTED_USERS" "$COLLECTED_GROUPS" "$COLLECTED_COMPUTERS" "$COLLECTED_DOMAINS" "$COLLECTED_GPOS" "$COLLECTED_OUS" "$COLLECTED_CONTAINERS" "$COLLECTED_TRUSTS" "$COLLECTED_ACES" 2>/dev/null' EXIT
+# Export variables for export_ce.sh to use
+export COLLECTED_OUS COLLECTED_CONTAINERS
+
+# Note: Cleanup is now handled by the main script after export
+# trap 'rm -f "$COLLECTED_USERS" "$COLLECTED_GROUPS" "$COLLECTED_COMPUTERS" "$COLLECTED_DOMAINS" "$COLLECTED_GPOS" "$COLLECTED_OUS" "$COLLECTED_CONTAINERS" "$COLLECTED_TRUSTS" "$COLLECTED_ACES" 2>/dev/null' EXIT
 
 collector_init_domain() {
     local domain="$1"

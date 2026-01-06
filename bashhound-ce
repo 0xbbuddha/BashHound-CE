@@ -321,14 +321,19 @@ main() {
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $gpos_count gpos parsed!"
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $containers_count containers parsed!"
                 
-                local trusts_count=$(jq '[.data[].Trusts | length] | add' bloodhound_domains_*.json 2>/dev/null || echo 0)
-                if [ "$trusts_count" -gt 0 ]; then
+                local trusts_count=$(jq -s '[.[].data[].Trusts | length] | add // 0' bloodhound_domains_*.json 2>/dev/null || echo 0)
+                if [ "$trusts_count" != "null" ] && [ "$trusts_count" -gt 0 ] 2>/dev/null; then
                     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $trusts_count domain trust(s) found!"
                 fi
                 
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $zip_filename created!"
                 echo ""
                 echo -e "${bashhound_color}BashHound-CE${reset} Enumeration Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
+                
+                # Cleanup temporary collection files
+                rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
+                      "/tmp/bashhound_domains_$$" "/tmp/bashhound_gpos_$$" "/tmp/bashhound_ous_$$" \
+                      "/tmp/bashhound_containers_$$" "/tmp/bashhound_trusts_$$" "/tmp/bashhound_aces_$$" 2>/dev/null
                 
                 if [ "$ZIP_ONLY" = "true" ]; then
                     rm -f "${created_files[@]}"
