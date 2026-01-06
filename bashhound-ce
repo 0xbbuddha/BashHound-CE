@@ -294,13 +294,22 @@ main() {
     local output_prefix="bloodhound"
     local created_files=($(export_create_json_files "$DOMAIN" "$output_prefix" 2>&1 | grep -v "INFO:"))
     
-    local users_count=$(jq '.meta.count' bloodhound_users_*.json 2>/dev/null | head -1 || echo 0)
-    local groups_count=$(jq '.meta.count' bloodhound_groups_*.json 2>/dev/null | head -1 || echo 0)
-    local computers_count=$(jq '.meta.count' bloodhound_computers_*.json 2>/dev/null | head -1 || echo 0)
-    local domains_count=$(jq '.meta.count' bloodhound_domains_*.json 2>/dev/null | head -1 || echo 0)
-    local gpos_count=$(jq '.meta.count' bloodhound_gpos_*.json 2>/dev/null | head -1 || echo 0)
-    local ous_count=$(jq '.meta.count' bloodhound_ous_*.json 2>/dev/null | head -1 || echo 0)
-    local containers_count=$(jq '.meta.count' bloodhound_containers_*.json 2>/dev/null | head -1 || echo 0)
+    # Extract counts from the newly created files only
+    local users_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_users_' | head -1)
+    local groups_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_groups_' | head -1)
+    local computers_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_computers_' | head -1)
+    local domains_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_domains_' | head -1)
+    local gpos_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_gpos_' | head -1)
+    local ous_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_ous_' | head -1)
+    local containers_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_containers_' | head -1)
+    
+    local users_count=$([ -f "$users_file" ] && jq '.meta.count' "$users_file" 2>/dev/null || echo 0)
+    local groups_count=$([ -f "$groups_file" ] && jq '.meta.count' "$groups_file" 2>/dev/null || echo 0)
+    local computers_count=$([ -f "$computers_file" ] && jq '.meta.count' "$computers_file" 2>/dev/null || echo 0)
+    local domains_count=$([ -f "$domains_file" ] && jq '.meta.count' "$domains_file" 2>/dev/null || echo 0)
+    local gpos_count=$([ -f "$gpos_file" ] && jq '.meta.count' "$gpos_file" 2>/dev/null || echo 0)
+    local ous_count=$([ -f "$ous_file" ] && jq '.meta.count' "$ous_file" 2>/dev/null || echo 0)
+    local containers_count=$([ -f "$containers_file" ] && jq '.meta.count' "$containers_file" 2>/dev/null || echo 0)
     
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Parsing LDAP objects finished!"
     
@@ -321,14 +330,22 @@ main() {
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $gpos_count gpos parsed!"
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $containers_count containers parsed!"
                 
-                local trusts_count=$(jq '[.data[].Trusts | length] | add' bloodhound_domains_*.json 2>/dev/null || echo 0)
-                if [ "$trusts_count" -gt 0 ]; then
-                    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $trusts_count domain trust(s) found!"
+                # Count trusts only from the newly created domain file
+                if [ -f "$domains_file" ]; then
+                    local trusts_count=$(jq '[.data[].Trusts | length] | add // 0' "$domains_file" 2>/dev/null || echo 0)
+                    if [ "$trusts_count" != "null" ] && [ "$trusts_count" -gt 0 ] 2>/dev/null; then
+                        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $trusts_count domain trust(s) found!"
+                    fi
                 fi
                 
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $zip_filename created!"
                 echo ""
                 echo -e "${bashhound_color}BashHound-CE${reset} Enumeration Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
+                
+                # Cleanup temporary collection files
+                rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
+                      "/tmp/bashhound_domains_$$" "/tmp/bashhound_gpos_$$" "/tmp/bashhound_ous_$$" \
+                      "/tmp/bashhound_containers_$$" "/tmp/bashhound_trusts_$$" "/tmp/bashhound_aces_$$" 2>/dev/null
                 
                 if [ "$ZIP_ONLY" = "true" ]; then
                     rm -f "${created_files[@]}"
