@@ -40,6 +40,55 @@ resolve_principal_type() {
     esac
 }
 
+resolve_contained_by() {
+    local dn_upper="$1"
+    local domain_sid="$2"
+    
+    # Extraire le parent DN (tout après la première virgule)
+    local parent_dn=$(echo "$dn_upper" | sed 's/^[^,]*,//')
+    
+    # Si le parent est le domaine racine (DC=...,DC=...), return null
+    if [[ "$parent_dn" =~ ^DC= ]]; then
+        echo "null"
+        return 0
+    fi
+    
+    # Chercher le parent dans les OUs
+    local ous_file="/tmp/bashhound_ous_$$"
+    if [ -f "$ous_file" ] && [ -s "$ous_file" ]; then
+        while IFS='|' read -r ou_dn ou_name gplink blocks_inheritance description; do
+            if [ -n "$ou_dn" ]; then
+                local ou_dn_upper=$(echo "$ou_dn" | tr '[:lower:]' '[:upper:]')
+                if [ "$ou_dn_upper" = "$parent_dn" ]; then
+                    # Générer le GUID de l'OU (MD5 du DN)
+                    local ou_guid=$(echo -n "$ou_dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                    echo "{\"ObjectIdentifier\":\"$ou_guid\",\"ObjectType\":\"OU\"}"
+                    return 0
+                fi
+            fi
+        done < "$ous_file"
+    fi
+    
+    # Chercher le parent dans les Containers
+    local containers_file="/tmp/bashhound_containers_$$"
+    if [ -f "$containers_file" ] && [ -s "$containers_file" ]; then
+        while IFS='|' read -r container_dn container_name description; do
+            if [ -n "$container_dn" ]; then
+                local container_dn_upper=$(echo "$container_dn" | tr '[:lower:]' '[:upper:]')
+                if [ "$container_dn_upper" = "$parent_dn" ]; then
+                    # Générer le GUID du Container
+                    local container_guid=$(echo -n "$container_dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                    echo "{\"ObjectIdentifier\":\"$container_guid\",\"ObjectType\":\"Container\"}"
+                    return 0
+                fi
+            fi
+        done < "$containers_file"
+    fi
+    
+    # Si pas trouvé, retourner null
+    echo "null"
+}
+
 build_aces_json() {
     local object_id="$1"
     local aces_file="/tmp/bashhound_aces_$$"
@@ -215,6 +264,7 @@ export_create_json_files() {
                 [ -z "$pwd_last_set" ] && pwd_last_set="-1"
                 
                 local aces_json=$(build_aces_json "$sid")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
                 
                 users_data+=("$(cat <<USEREOF
 {
@@ -264,7 +314,7 @@ export_create_json_files() {
   "DomainSID": "$domain_sid",
   "Aces": $aces_json,
   "AllowedToDelegate": [],
-  "ContainedBy": null,
+  "ContainedBy": $contained_by,
   "HasSIDHistory": []
 }
 USEREOF
@@ -349,13 +399,14 @@ EOF
                 fi
                 
                 local aces_json=$(build_aces_json "$sid")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
                 
                 groups_data+=("$(cat <<GROUPEOF
 {
   "ObjectIdentifier": "$sid",
   "IsDeleted": false,
   "IsACLProtected": false,
-  "ContainedBy": null,
+  "ContainedBy": $contained_by,
   "Properties": {
     "domain": "$domain_upper",
     "domainsid": "$domain_sid",
@@ -522,7 +573,7 @@ EOF
   "Aces": $aces_json,
   "AllowedToAct": [],
   "AllowedToDelegate": [],
-  "ContainedBy": null,
+  "ContainedBy": $contained_by,
   "DCRegistryData": $dc_registry_data,
   "DumpSMSAPassword": [],
   "HasSIDHistory": [],
