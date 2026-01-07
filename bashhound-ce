@@ -374,6 +374,9 @@ main() {
     local ous_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_ous_' | head -1)
     local containers_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_containers_' | head -1)
     
+    local certtemplates_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_certtemplates_' | head -1)
+    local enterprisecas_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_enterprisecas_' | head -1)
+    
     local users_count=$([ -f "$users_file" ] && jq '.meta.count' "$users_file" 2>/dev/null || echo 0)
     local groups_count=$([ -f "$groups_file" ] && jq '.meta.count' "$groups_file" 2>/dev/null || echo 0)
     local computers_count=$([ -f "$computers_file" ] && jq '.meta.count' "$computers_file" 2>/dev/null || echo 0)
@@ -381,6 +384,8 @@ main() {
     local gpos_count=$([ -f "$gpos_file" ] && jq '.meta.count' "$gpos_file" 2>/dev/null || echo 0)
     local ous_count=$([ -f "$ous_file" ] && jq '.meta.count' "$ous_file" 2>/dev/null || echo 0)
     local containers_count=$([ -f "$containers_file" ] && jq '.meta.count' "$containers_file" 2>/dev/null || echo 0)
+    local certtemplates_count=$([ -f "$certtemplates_file" ] && jq '.meta.count' "$certtemplates_file" 2>/dev/null || echo 0)
+    local enterprisecas_count=$([ -f "$enterprisecas_file" ] && jq '.meta.count' "$enterprisecas_file" 2>/dev/null || echo 0)
     
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Parsing LDAP objects finished!"
     
@@ -404,6 +409,8 @@ main() {
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $domains_count domains parsed!"
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $gpos_count gpos parsed!"
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $containers_count containers parsed!"
+                [ "$certtemplates_count" -gt 0 ] && echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $certtemplates_count certificate templates parsed!"
+                [ "$enterprisecas_count" -gt 0 ] && echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $enterprisecas_count enterprise CAs parsed!"
                 
                 # Count trusts only from the newly created domain file
                 if [ -f "$domains_file" ]; then
