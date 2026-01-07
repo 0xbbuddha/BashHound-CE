@@ -1,0 +1,52 @@
+name: Auto Release
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Generate release info
+        id: release_info
+        run: |
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          RELEASE_TAG="r${COMMIT_COUNT}.${SHORT_SHA}"
+          echo "tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "title=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+      
+      - name: Create ZIP archive
+        run: |
+          mkdir -p release
+          cp -r bashhound-ce lib COPYING README.md release/
+          cd release
+          zip -r ../bashhound-ce.zip .
+          cd ..
+          rm -rf release
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.release_info.outputs.tag }}
+          name: ${{ steps.release_info.outputs.title }}
+          body: |
+            Automatic release from commit ${{ github.sha }}
+            
+            **Changements** : ${{ github.event.head_commit.message }}
+          files: bashhound-ce.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
