@@ -1,5 +1,33 @@
 #!/usr/bin/env bash
 
+################################################################################
+# ldap_parser.sh - LDAP Response Parser
+#
+# This module parses hexadecimal LDAP responses into usable data.
+#
+# LDAP responses are ASN.1 BER-encoded binary data, represented as hex strings.
+# This parser extracts specific attributes from SearchResultEntry responses:
+#
+# Common attributes:
+# - distinguishedName: Object's full DN path
+# - objectSid: Security Identifier (binary → S-1-5-21-...)
+# - sAMAccountName: Short login name
+# - member/memberOf: Group membership DNs
+# - servicePrincipalName: Kerberos SPNs
+# - userAccountControl: UAC flags (bitmask)
+# - primaryGroupID: RID of primary group
+# - Timestamps: whenCreated, lastLogon, pwdLastSet (Windows FileTime)
+# - nTSecurityDescriptor: Security Descriptor (ACLs)
+#
+# Challenges:
+# - ASN.1 supports multiple length encodings (short/long form)
+# - Attribute values can be binary integers OR ASCII strings
+# - Timestamps in GeneralizedTime format (YYYYMMDDHHmmss.0Z)
+# - Must handle both expected and unexpected encodings
+#
+# All extraction functions return empty/default values on parse failure.
+################################################################################
+
 [[ -n "${_LDAP_PARSER_SH_LOADED:-}" ]] && return 0
 readonly _LDAP_PARSER_SH_LOADED=1
 

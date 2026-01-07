@@ -1,25 +1,61 @@
 #!/usr/bin/env bash
 
-# ldap.sh - Implémentation du protocole LDAP en bash pur
+################################################################################
+# ldap.sh - Pure Bash implementation of LDAP protocol
+# 
 # RFC 4511 - Lightweight Directory Access Protocol (LDAP)
+# 
+# This module implements LDAP v3 protocol entirely in Bash without external
+# LDAP libraries. It handles:
+# - TCP and TLS (LDAPS) connections
+# - ASN.1 BER encoding/decoding
+# - LDAP operations: Bind, Search, Unbind
+# - Message ID management
+# - Reconnection logic
+#
+# Implementation uses:
+# - /dev/tcp for plain LDAP connections
+# - openssl s_client with named pipes (FIFOs) for LDAPS
+# - Pure Bash hex manipulation for protocol encoding
+################################################################################
 
+# Prevent multiple loading of this library
 [[ -n "${_LDAP_SH_LOADED:-}" ]] && return 0
 readonly _LDAP_SH_LOADED=1
 
+# Load ASN.1 encoding/decoding functions
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$LIB_DIR/asn1.sh"
 
-LDAP_HOST=""
-LDAP_PORT=389
-LDAP_FD=""
-LDAP_MESSAGE_ID=1
-LDAP_USE_TLS=false
-LDAP_OPENSSL_PID=""
-LDAP_AUTO_RECONNECT=true
-LDAP_BIND_DN=""
-LDAP_BIND_PASSWORD=""
-LDAP_DEBUG="${LDAP_DEBUG:-false}"
+# -------------------------------------------------------------------------
+# LDAP CONNECTION STATE VARIABLES
+# -------------------------------------------------------------------------
+LDAP_HOST=""                    # Target LDAP server hostname/IP
+LDAP_PORT=389                   # LDAP port (389 plain, 636 TLS)
+LDAP_FD=""                      # File descriptor for LDAP connection
+LDAP_MESSAGE_ID=1               # Current LDAP message ID (incremented per request)
+LDAP_USE_TLS=false              # Whether TLS/SSL is used
+LDAP_OPENSSL_PID=""             # PID of openssl process (for LDAPS)
+LDAP_AUTO_RECONNECT=true        # Auto-reconnect on connection loss
+LDAP_BIND_DN=""                 # Bound user DN (for reconnection)
+LDAP_BIND_PASSWORD=""           # Bound user password (for reconnection)
+LDAP_DEBUG="${LDAP_DEBUG:-false}" # Enable debug output
 
+################################################################################
+# ldap_connect - Establish LDAP connection (plain or TLS)
+#
+# Args:
+#   $1 - host: LDAP server hostname or IP
+#   $2 - port: Port number (default 389)
+#   $3 - use_tls: "true", "false", or "auto" (auto-detect based on port)
+#
+# Returns:
+#   0 on success, 1 on failure
+#
+# Side effects:
+#   Sets LDAP_FD to file descriptor number
+#   Sets LDAP_HOST and LDAP_PORT
+################################################################################
 ldap_connect() {
     local host="$1"
     local port="${2:-389}"
@@ -28,6 +64,7 @@ ldap_connect() {
     LDAP_HOST="$host"
     LDAP_PORT="$port"
     
+    # Auto-detect TLS based on port number
     if [ "$use_tls" = "auto" ]; then
         if [ "$port" = "636" ]; then
             use_tls="true"
@@ -36,6 +73,7 @@ ldap_connect() {
         fi
     fi
     
+    # Route to appropriate connection method
     if [ "$use_tls" = "true" ]; then
         echo "INFO: Connexion LDAPS (TLS) à $host:$port..." >&2
         ldap_connect_tls "$host" "$port"
@@ -47,16 +85,35 @@ ldap_connect() {
     fi
 }
 
+################################################################################
+# ldap_connect_plain - Establish plain (unencrypted) LDAP connection
+#
+# Uses Bash's built-in /dev/tcp redirection to establish TCP socket.
+# This method doesn't require external tools like nc or telnet.
+#
+# Args:
+#   $1 - host: LDAP server hostname or IP
+#   $2 - port: Port number
+#
+# Returns:
+#   0 on success, 1 on failure
+#
+# Side effects:
+#   Opens file descriptor 3 for bidirectional communication
+#   Sets LDAP_FD="3"
+################################################################################
 ldap_connect_plain() {
     local host="$1"
     local port="$2"
 
+    # Test connection first to provide clean error message
     if ! ( exec 3<>"/dev/tcp/$host/$port" ) 2>/dev/null; then
         echo "ERROR: Impossible de se connecter à $host:$port" >&2
         echo "ERROR: Vérifiez que le serveur est accessible et écoute sur le port $port" >&2
         return 1
     fi
     
+    # Establish the connection on file descriptor 3
     exec 3<>"/dev/tcp/$host/$port"
     
     LDAP_FD=3
@@ -65,31 +122,63 @@ ldap_connect_plain() {
     return 0
 }
 
+################################################################################
+# ldap_connect_tls - Establish TLS-encrypted LDAP connection (LDAPS)
+#
+# Uses openssl s_client and named pipes (FIFOs) for communication.
+# Architecture:
+#   Bash (FD 3) --write--> FIFO_IN ---> openssl s_client ---> LDAP Server
+#   Bash (FD 4) <--read--- FIFO_OUT <--- openssl s_client <--- LDAP Server
+#
+# This approach allows pure Bash to communicate with TLS servers without
+# native TLS support.
+#
+# Args:
+#   $1 - host: LDAP server hostname or IP
+#   $2 - port: Port number (typically 636)
+#
+# Returns:
+#   0 on success, 1 on failure
+#
+# Side effects:
+#   Creates FIFOs: /tmp/bashhound_ldaps_in_$$ and _out_$$
+#   Spawns openssl s_client background process
+#   Sets LDAP_OPENSSL_PID to process ID
+#   Opens FD 3 (write) and FD 4 (read)
+################################################################################
 ldap_connect_tls() {
     local host="$1"
     local port="$2"
     
+    # Check for openssl availability
     if ! command -v openssl &> /dev/null; then
         echo "ERROR: openssl n'est pas installé. LDAPS non disponible." >&2
         return 1
     fi
     
+    # Clean up any existing connection
     if [ -n "$LDAP_OPENSSL_PID" ]; then
         kill "$LDAP_OPENSSL_PID" 2>/dev/null
         wait "$LDAP_OPENSSL_PID" 2>/dev/null
     fi
     rm -f "/tmp/bashhound_ldaps_in_$$" "/tmp/bashhound_ldaps_out_$$" 2>/dev/null
     
-    local fifo_in="/tmp/bashhound_ldaps_in_$$"
-    local fifo_out="/tmp/bashhound_ldaps_out_$$"
+    # Create named pipes (FIFOs) for bidirectional communication
+    local fifo_in="/tmp/bashhound_ldaps_in_$$"   # Bash writes here, openssl reads
+    local fifo_out="/tmp/bashhound_ldaps_out_$$" # Openssl writes here, Bash reads
     
     mkfifo "$fifo_in" "$fifo_out" 2>/dev/null
 
+    # Launch openssl s_client in background
+    # -quiet: suppress verbose connection info
+    # -ign_eof: don't close on EOF from stdin
     openssl s_client -quiet -connect "$host:$port" -ign_eof < "$fifo_in" > "$fifo_out" 2>/dev/null &
     LDAP_OPENSSL_PID=$!
     
+    # Wait for TLS handshake to complete
     sleep 1
     
+    # Verify openssl process is still running (handshake succeeded)
     if ! kill -0 "$LDAP_OPENSSL_PID" 2>/dev/null; then
         echo "ERROR: Échec de la connexion TLS" >&2
         rm -f "$fifo_in" "$fifo_out"
@@ -97,8 +186,9 @@ ldap_connect_tls() {
         return 1
     fi
     
-    exec 3>"$fifo_in" 2>/dev/null
-    exec 4<"$fifo_out" 2>/dev/null
+    # Open file descriptors to FIFOs
+    exec 3>"$fifo_in" 2>/dev/null   # FD 3: write to openssl
+    exec 4<"$fifo_out" 2>/dev/null  # FD 4: read from openssl
     
     LDAP_FD=3
     LDAP_USE_TLS=true
@@ -138,21 +228,39 @@ ldap_reconnect() {
     return 0
 }
 
+################################################################################
+# ldap_disconnect - Close LDAP connection and cleanup resources
+#
+# Handles cleanup for both plain and TLS connections:
+# - Plain: Closes file descriptor 3
+# - TLS: Closes FDs 3 & 4, kills openssl process, removes FIFOs
+#
+# Side effects:
+#   Closes file descriptors
+#   Terminates openssl process (if TLS)
+#   Removes temporary FIFO files
+#   Clears LDAP_FD and LDAP_OPENSSL_PID
+################################################################################
 ldap_disconnect() {
     if [ -n "$LDAP_FD" ]; then
         if [ "$LDAP_USE_TLS" = "true" ]; then
-            exec 3>&- 2>/dev/null
-            exec 4<&- 2>/dev/null
+            # Close file descriptors
+            exec 3>&- 2>/dev/null  # Close write to FIFO
+            exec 4<&- 2>/dev/null  # Close read from FIFO
             
+            # Terminate openssl process
             if [ -n "$LDAP_OPENSSL_PID" ]; then
                 kill "$LDAP_OPENSSL_PID" 2>/dev/null
                 wait "$LDAP_OPENSSL_PID" 2>/dev/null
             fi
             
+            # Remove FIFOs
             rm -f "/tmp/bashhound_ldaps_in_$$" "/tmp/bashhound_ldaps_out_$$" 2>/dev/null
+            rm -f "/tmp/bashhound_ldaps_err_$$" 2>/dev/null
             
             echo "INFO: Connexion LDAPS fermée" >&2
         else
+            # Close plain TCP connection
             exec 3>&-
             echo "INFO: Connexion LDAP fermée" >&2
         fi

@@ -1,5 +1,32 @@
 #!/usr/bin/env bash
 
+################################################################################
+# export_ce.sh - BloodHound Community Edition v6 JSON Export
+#
+# This module transforms collected AD data into BloodHound CE compatible JSON.
+#
+# Main responsibilities:
+# - Read pipe-delimited temporary files from collectors
+# - Resolve relationships (group memberships, ACLs, parent/child)
+# - Format data into BloodHound CE v6 JSON structure
+# - Create separate JSON files per object type:
+#   * bloodhound_users_*.json
+#   * bloodhound_groups_*.json
+#   * bloodhound_computers_*.json
+#   * bloodhound_domains_*.json
+#   * bloodhound_gpos_*.json
+#   * bloodhound_ous_*.json
+#   * bloodhound_containers_*.json
+#
+# Key features:
+# - High-value group detection (well-known SIDs + adminCount)
+# - GPLink parsing with IsEnforced flag
+# - ACL/ACE transformation
+# - ContainedBy resolution (parent OU/Container lookup)
+#
+# Reference: https://bloodhound.specterops.io/integrations/bloodhound-api/json-formats
+################################################################################
+
 [[ -n "${_EXPORT_SH_LOADED:-}" ]] && return 0
 readonly _EXPORT_SH_LOADED=1
 

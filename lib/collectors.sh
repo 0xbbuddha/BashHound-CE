@@ -1,17 +1,47 @@
 #!/usr/bin/env bash
 
+################################################################################
+# collectors.sh - Active Directory object collectors
+#
+# This module queries LDAP to collect all Active Directory objects:
+# - Users (objectClass=user)
+# - Groups (objectClass=group) + memberships
+# - Computers (objectClass=computer)
+# - Domains (objectClass=domain) + GPLinks
+# - GPOs (objectClass=groupPolicyContainer)
+# - OUs (objectClass=organizationalUnit) + GPLinks
+# - Containers (objectClass=container)
+# - Trusts (objectClass=trustedDomain)
+# - ACLs/ACEs (nTSecurityDescriptor attribute)
+#
+# Each collector function:
+# 1. Performs LDAP search with specific filter
+# 2. Parses hex responses with ldap_parser.sh functions
+# 3. Stores results in temporary files for later export
+#
+# Temporary files are pipe-delimited (|) format for easy parsing.
+################################################################################
+
 [[ -n "${_COLLECTORS_SH_LOADED:-}" ]] && return 0
 readonly _COLLECTORS_SH_LOADED=1
 
+# Load required libraries
 LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$LIB_DIR/ldap.sh"
-source "$LIB_DIR/ldap_parser.sh"
-source "$LIB_DIR/acl_parser.sh"
+source "$LIB_DIR/ldap.sh"          # LDAP protocol functions
+source "$LIB_DIR/ldap_parser.sh"    # LDAP response parsing
+source "$LIB_DIR/acl_parser.sh"     # Security Descriptor / ACL parsing
 
-DOMAIN_NAME=""
-DOMAIN_DN=""
-DOMAIN_SID=""
+# -------------------------------------------------------------------------
+# DOMAIN STATE VARIABLES
+# -------------------------------------------------------------------------
+DOMAIN_NAME=""      # Domain name (e.g., domain.local)
+DOMAIN_DN=""        # Domain DN (e.g., DC=domain,DC=local)
+DOMAIN_SID=""       # Domain SID (e.g., S-1-5-21-...)
 
+# -------------------------------------------------------------------------
+# TEMPORARY FILES FOR COLLECTED DATA
+# Each file stores pipe-delimited data for one object type
+# -------------------------------------------------------------------------
 COLLECTED_USERS="/tmp/bashhound_users_$$"
 COLLECTED_GROUPS="/tmp/bashhound_groups_$$"
 COLLECTED_COMPUTERS="/tmp/bashhound_computers_$$"
@@ -22,19 +52,42 @@ COLLECTED_CONTAINERS="/tmp/bashhound_containers_$$"
 COLLECTED_TRUSTS="/tmp/bashhound_trusts_$$"
 COLLECTED_ACES="/tmp/bashhound_aces_$$"
 
+# Cleanup temporary files on script exit
 trap 'rm -f "$COLLECTED_USERS" "$COLLECTED_GROUPS" "$COLLECTED_COMPUTERS" "$COLLECTED_DOMAINS" "$COLLECTED_GPOS" "$COLLECTED_OUS" "$COLLECTED_CONTAINERS" "$COLLECTED_TRUSTS" "$COLLECTED_ACES" 2>/dev/null' EXIT
 
+################################################################################
+# collector_init_domain - Initialize domain for collection
+#
+# Args:
+#   $1 - domain: Domain name (e.g., domain.local)
+#
+# Side effects:
+#   Sets DOMAIN_NAME, DOMAIN_DN
+#   Initializes COLLECTED_ACES file
+################################################################################
 collector_init_domain() {
     local domain="$1"
     DOMAIN_NAME="$domain"
     
+    # Convert domain.local -> DC=domain,DC=local
     DOMAIN_DN=$(echo "$domain" | sed 's/\./,DC=/g' | sed 's/^/DC=/')
     
+    # Initialize ACEs collection file
     > "$COLLECTED_ACES"
     
     echo "INFO: Domaine initialisé - $DOMAIN_NAME ($DOMAIN_DN)" >&2
 }
 
+################################################################################
+# collect_domain_info - Collect domain object information
+#
+# Queries the domain object itself to get:
+# - Domain SID
+# - Domain GPLinks
+# - Domain ACLs
+#
+# Results stored in: COLLECTED_DOMAINS, COLLECTED_ACES, DOMAIN_SID (global)
+################################################################################
 collect_domain_info() {
     echo "INFO: Collecte des informations du domaine..." >&2
     
@@ -66,6 +119,15 @@ collect_domain_info() {
     echo "$results"
 }
 
+################################################################################
+# collect_users - Collect all user objects from AD
+#
+# LDAP Filter: (objectClass=user)
+# Attributes: DN, sAMAccountName, objectSid, primaryGroupID, userAccountControl,
+#             servicePrincipalName, timestamps, description, adminCount, ACLs
+#
+# Results stored in: COLLECTED_USERS, COLLECTED_ACES
+################################################################################
 collect_users() {
     echo "INFO: Collecte des utilisateurs..." >&2
     
@@ -140,6 +202,14 @@ collect_users() {
     echo "INFO: $count utilisateurs collectés et parsés" >&2
 }
 
+################################################################################
+# collect_groups - Collect all group objects from AD
+#
+# LDAP Filter: (objectClass=group)
+# Attributes: DN, sAMAccountName, objectSid, member, adminCount, ACLs
+#
+# Results stored in: COLLECTED_GROUPS, COLLECTED_ACES
+################################################################################
 collect_groups() {
     echo "INFO: Collecte des groupes..." >&2
     

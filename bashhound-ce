@@ -1,27 +1,37 @@
 #!/usr/bin/env bash
 
-# BashHound - by 0xbbuddha
-# Active Directory data collector for BloodHound written in Bash - Alternative to SharpHound and RustHound
+################################################################################
+# BashHound-CE - by 0xbbuddha
+# 
+# Active Directory data collector for BloodHound Community Edition (v6)
+# Written in pure Bash - Alternative to SharpHound and RustHound
+#
+# This tool collects AD data via LDAP/LDAPS and exports it in BloodHound CE
+# compatible JSON format. No external dependencies except standard Unix tools.
+################################################################################
 
-# Disabled to allow the script to continue in case of LDAP errors
+# Error handling disabled to allow the script to continue on LDAP errors
+# Some LDAP queries may fail without breaking the entire collection
 # set -euo pipefail
 # set -u
 
+# Script initialization - determine script location and load libraries
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/ldap.sh"
-source "$SCRIPT_DIR/lib/collectors.sh"
-source "$SCRIPT_DIR/lib/export_ce.sh"
+source "$SCRIPT_DIR/lib/ldap.sh"        # Core LDAP protocol implementation
+source "$SCRIPT_DIR/lib/collectors.sh"  # AD object collectors (users, groups, etc.)
+source "$SCRIPT_DIR/lib/export_ce.sh"   # BloodHound CE JSON export functions
 
-DOMAIN=""
-USERNAME=""
-PASSWORD=""
-LDAP_SERVER=""
-LDAP_PORT="389"
-USE_LDAPS=false
-OUTPUT_FILE=""
-COLLECTION_METHOD="All"
-ZIP_ONLY=false
-VERBOSE=false
+# Global configuration variables
+DOMAIN=""                  # Target AD domain (e.g., domain.local)
+USERNAME=""                # Authentication username
+PASSWORD=""                # Authentication password
+LDAP_SERVER=""             # DC/LDAP server address
+LDAP_PORT="389"            # LDAP port (389 for plain, 636 for TLS)
+USE_LDAPS=false            # Whether to use LDAPS (TLS encryption)
+OUTPUT_FILE=""             # Custom output filename (optional)
+COLLECTION_METHOD="All"    # Collection method (All, DCOnly, Session, etc.)
+ZIP_ONLY=false             # Delete JSON files after creating ZIP
+VERBOSE=false              # Enable verbose/debug output
 
 show_usage() {
     cat <<EOF
@@ -140,10 +150,14 @@ parse_arguments() {
     fi
 }
 
+################################################################################
+# Display the BashHound-CE ASCII banner with colors
+# Uses 24-bit RGB colors for modern terminal support
+################################################################################
 show_banner() {
-    local bashhound_color='\033[38;2;0;229;142m'
-    local ce_color='\033[38;2;255;165;0m'
-    local author_color='\033[38;2;207;51;246m'
+    local bashhound_color='\033[38;2;0;229;142m'  # Cyan/green
+    local ce_color='\033[38;2;255;165;0m'         # Orange
+    local author_color='\033[38;2;207;51;246m'    # Purple
     local reset='\033[0m'
     
     echo -e "${bashhound_color}    ____             __    __  __                      __${reset}     ${ce_color}____________${reset}"
@@ -156,48 +170,71 @@ show_banner() {
     echo ""
 }
 
+################################################################################
+# Main execution function
+# Orchestrates the entire collection process:
+# 1. Display banner and parse arguments
+# 2. Connect to LDAP server with optional TLS
+# 3. Authenticate with provided credentials
+# 4. Collect AD data based on collection method
+# 5. Export data to BloodHound CE compatible JSON
+# 6. Create ZIP archive
+################################################################################
 main() {
     show_banner
     
+    # Parse command-line arguments and validate required parameters
     parse_arguments "$@"
     
+    # Auto-enable LDAPS if port 636 is specified
     if [ "$LDAP_PORT" = "636" ] && [ "$USE_LDAPS" = "false" ]; then
         USE_LDAPS=true
     fi
     
+    # Determine protocol for display
     local protocol="LDAP"
     if [ "$USE_LDAPS" = "true" ]; then
         protocol="LDAPS (TLS)"
     fi
     
+    # Display configuration
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Verbosity level: $([ "$VERBOSE" = "true" ] && echo "Debug" || echo "Info")"
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Connecting to $DOMAIN Active Directory..."
     
+    # Prepare TLS flag for ldap_connect
     local use_tls="false"
     if [ "$USE_LDAPS" = "true" ]; then
         use_tls="true"
     fi
     
+    # Establish LDAP connection (with or without TLS)
+    # Filter output based on verbosity level
     if [ "$VERBOSE" = "true" ]; then
         ldap_connect "$LDAP_SERVER" "$LDAP_PORT" "$use_tls"
     else
+        # Suppress INFO/DEBUG messages in non-verbose mode
         local tmplog="/tmp/bashhound_log_$$"
         ldap_connect "$LDAP_SERVER" "$LDAP_PORT" "$use_tls" 2>"$tmplog"
         grep -vE "INFO:|DEBUG:" "$tmplog" >&2 2>/dev/null || true
         rm -f "$tmplog"
     fi
     
+    # Verify connection was successful
     if [ -z "$LDAP_FD" ] || [ "$LDAP_FD" = "" ]; then
         echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Impossible de se connecter au serveur LDAP" >&2
         exit 1
     fi
     
+    # Prepare bind DN - convert username to proper LDAP DN format if needed
+    # Supports: username, user@domain.com, or full DN (CN=...)
     local bind_dn="$USERNAME"
     
     if [[ ! "$bind_dn" =~ @ ]] && [[ ! "$bind_dn" =~ ^CN= ]]; then
+        # Simple username -> Convert to CN=user,CN=Users,DC=domain,DC=local
         bind_dn="CN=$USERNAME,CN=Users,$(echo "$DOMAIN" | sed 's/\./,DC=/g' | sed 's/^/DC=/')"
     fi
     
+    # Authenticate to LDAP server
     if [ "$VERBOSE" = "true" ]; then
         ldap_bind "$bind_dn" "$PASSWORD"
     else
@@ -207,6 +244,7 @@ main() {
         rm -f "$tmplog"
     fi
     
+    # Check authentication result
     if [ $? -ne 0 ]; then
         echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Authentication failed" >&2
         ldap_disconnect
@@ -218,7 +256,15 @@ main() {
     
     local raw_data=""
     
+    # -------------------------------------------------------------------------
+    # DATA COLLECTION PHASE
+    # Execute collection functions based on selected collection method
+    # Each collector queries LDAP and stores results in temporary files
+    # The '|| true' ensures script continues even if individual queries fail
+    # -------------------------------------------------------------------------
     case "$COLLECTION_METHOD" in
+        # All: Complete collection (default)
+        # Collects: domain, users, groups, computers, GPOs, OUs, containers, trusts
         All|all|ALL)
             if [ "$VERBOSE" = "true" ]; then
                 collector_init_domain "$DOMAIN" 2>&1
@@ -242,6 +288,8 @@ main() {
                 collect_trusts >/dev/null 2>&1 || true
             fi
             ;;
+        # DCOnly: Same as All but designed for DC-only enumeration
+        # No difference in current implementation (sessions not implemented)
         DCOnly|dconly)
             if [ "$VERBOSE" = "true" ]; then
                 collector_init_domain "$DOMAIN" 2>&1
@@ -265,6 +313,7 @@ main() {
                 collect_trusts >/dev/null 2>&1 || true
             fi
             ;;
+        # Trusts: Collect only domain trust relationships
         Trusts|trusts)
             if [ "$VERBOSE" = "true" ]; then
                 collector_init_domain "$DOMAIN" 2>&1
@@ -274,6 +323,7 @@ main() {
                 collect_trusts >/dev/null 2>&1 || true
             fi
             ;;
+        # Unknown method: fallback to minimal collection
         *)
             echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Méthode de collection inconnue, utilisation de 'All'" >&2
             if [ "$VERBOSE" = "true" ]; then
@@ -287,13 +337,25 @@ main() {
     esac
     
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] All data collected for NamingContext DC=$(echo "$DOMAIN" | tr '.' ',DC=')"
+    
+    # Close LDAP connection - data collection is complete
     ldap_unbind 2>&1 | grep -v "INFO:" >&2
     
+    # -------------------------------------------------------------------------
+    # EXPORT PHASE
+    # Parse collected data from temporary files and export to BloodHound CE
+    # compatible JSON files (v6 format)
+    # -------------------------------------------------------------------------
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting the LDAP objects parsing..."
     
     local output_prefix="bloodhound"
+    # export_create_json_files returns list of created files
     local created_files=($(export_create_json_files "$DOMAIN" "$output_prefix" 2>&1 | grep -v "INFO:"))
     
+    # -------------------------------------------------------------------------
+    # COUNT EXPORTED OBJECTS
+    # Extract count from metadata in each JSON file for summary display
+    # -------------------------------------------------------------------------
     local users_count=$(jq '.meta.count' bloodhound_users_*.json 2>/dev/null | head -1 || echo 0)
     local groups_count=$(jq '.meta.count' bloodhound_groups_*.json 2>/dev/null | head -1 || echo 0)
     local computers_count=$(jq '.meta.count' bloodhound_computers_*.json 2>/dev/null | head -1 || echo 0)
@@ -304,6 +366,10 @@ main() {
     
     echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Parsing LDAP objects finished!"
     
+    # -------------------------------------------------------------------------
+    # CREATE ZIP ARCHIVE
+    # Package all JSON files into a single ZIP for easy upload to BloodHound
+    # -------------------------------------------------------------------------
     if [ ${#created_files[@]} -gt 0 ]; then
         local timestamp=$(date +%Y%m%d_%H%M%S)
         local domain_clean=$(echo "$DOMAIN" | tr '[:upper:]' '[:lower:]' | tr '.' '-')
