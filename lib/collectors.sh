@@ -38,18 +38,25 @@ collector_init_domain() {
 collect_domain_info() {
     echo "INFO: Collecte des informations du domaine..." >&2
     
-    local results=$(ldap_search "$DOMAIN_DN" 0 "(objectClass=domain)" "objectSid,name,distinguishedName,nTSecurityDescriptor")
+    local results=$(ldap_search "$DOMAIN_DN" 0 "(objectClass=domain)" "objectSid,name,distinguishedName,gPLink,nTSecurityDescriptor")
     
     if [ -z "$results" ]; then
         echo "WARN: Aucune information de domaine trouvée" >&2
         return 1
     fi
     
+    > "$COLLECTED_DOMAINS"
+    
     while IFS= read -r line; do
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
             local sid=$(extract_sid_from_response "$line")
+            local gplink=$(extract_attribute_value "$line" "gPLink")
+            
             if [ -n "$sid" ]; then
                 DOMAIN_SID="$sid"
+                
+                # Store domain gplink for export
+                echo "$DOMAIN_DN|$gplink" >> "$COLLECTED_DOMAINS"
                 
                 local aces=$(extract_aces_from_ldap_response "$line")
                 if [ -n "$aces" ]; then
