@@ -148,6 +148,66 @@ ACEJSON
     fi
 }
 
+build_aces_json_certtemplate() {
+    local object_id="$1"
+    local aces_file="/tmp/bashhound_aces_$$"
+    
+    if [ ! -f "$aces_file" ]; then
+        echo "[]"
+        return 0
+    fi
+    
+    local ace_objs=()
+    
+    while IFS='|' read -r obj_id obj_type principal_sid right_name is_inherited; do
+        if [ "$obj_id" = "$object_id" ] && [ "$obj_type" = "CertTemplate" ] && [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+            local principal_type=$(resolve_principal_type "$principal_sid")
+            
+            local ace_json=$(cat <<ACEJSON
+{"PrincipalSID":"$principal_sid","PrincipalType":"$principal_type","RightName":"$right_name","IsInherited":$is_inherited,"InheritanceHash":""}
+ACEJSON
+)
+            ace_objs+=("$ace_json")
+        fi
+    done < "$aces_file"
+    
+    if [ ${#ace_objs[@]} -gt 0 ]; then
+        echo "[$(IFS=,; echo "${ace_objs[*]}")]"
+    else
+        echo "[]"
+    fi
+}
+
+build_aces_json_aiaca() {
+    local object_id="$1"
+    local aces_file="/tmp/bashhound_aces_$$"
+    
+    if [ ! -f "$aces_file" ]; then
+        echo "[]"
+        return 0
+    fi
+    
+    local ace_objs=()
+    
+    while IFS='|' read -r obj_id obj_type principal_sid right_name is_inherited; do
+        if [ "$obj_id" = "$object_id" ] && [ "$obj_type" = "AIACA" ] && [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+            local principal_type=$(resolve_principal_type "$principal_sid")
+            
+            local ace_json=$(cat <<ACEJSON
+{"PrincipalSID":"$principal_sid","PrincipalType":"$principal_type","RightName":"$right_name","IsInherited":$is_inherited,"InheritanceHash":""}
+ACEJSON
+)
+            ace_objs+=("$ace_json")
+        fi
+    done < "$aces_file"
+    
+    if [ ${#ace_objs[@]} -gt 0 ]; then
+        echo "[$(IFS=,; echo "${ace_objs[*]}")]"
+    else
+        echo "[]"
+    fi
+}
+
 build_child_objects() {
     local parent_dn_upper="$1"
     
@@ -1122,6 +1182,201 @@ CONTAINEREOF
 EOF
         files_created+=("$containers_file_out")
         echo "INFO: Créé $containers_file_out ($container_count containers)" >&2
+    fi
+    
+    local certtemplates_file="/tmp/bashhound_certtemplates_$$"
+    if [ -f "$certtemplates_file" ] && [ -s "$certtemplates_file" ]; then
+        local certtemplates_data=()
+        local certtemplate_count=0
+        
+        while IFS='|' read -r dn name display_name cert_name_flag enrollment_flag private_key_flag eku app_policy ra_signature schema_version min_key_size; do
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local display_name_json="null"
+                if [ -n "$display_name" ]; then
+                    display_name="${display_name//\\/\\\\}"
+                    display_name="${display_name//\"/\\\"}"
+                    display_name_json="\"$display_name\""
+                fi
+                
+                [ -z "$cert_name_flag" ] && cert_name_flag="0"
+                [ -z "$enrollment_flag" ] && enrollment_flag="0"
+                [ -z "$private_key_flag" ] && private_key_flag="0"
+                [ -z "$ra_signature" ] && ra_signature="0"
+                [ -z "$schema_version" ] && schema_version="1"
+                [ -z "$min_key_size" ] && min_key_size="2048"
+                
+                local enrollee_supplies_subject="false"
+                if (( cert_name_flag & 1 )); then
+                    enrollee_supplies_subject="true"
+                fi
+                
+                local requires_manager_approval="false"
+                if (( enrollment_flag & 2 )); then
+                    requires_manager_approval="true"
+                fi
+                
+                local authentication_enabled="false"
+                if [[ "$eku" =~ 1\.3\.6\.1\.5\.5\.7\.3\.2 ]] || [[ "$eku" =~ 1\.3\.6\.1\.4\.1\.311\.20\.2\.2 ]]; then
+                    authentication_enabled="true"
+                fi
+                
+                local eku_json="[]"
+                if [ -n "$eku" ]; then
+                    local eku_array=()
+                    IFS=',' read -ra eku_list <<< "$eku"
+                    for oid in "${eku_list[@]}"; do
+                        eku_array+=("\"$oid\"")
+                    done
+                    if [ ${#eku_array[@]} -gt 0 ]; then
+                        eku_json="[$(IFS=,; echo "${eku_array[*]}")]"
+                    fi
+                fi
+                
+                local aces_json=$(build_aces_json_certtemplate "$object_id")
+                
+                certtemplates_data+=("$(cat <<CERTTEMPLATEEOF
+{
+  "ObjectIdentifier": "$object_id",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "Properties": {
+    "domain": "$domain_upper",
+    "name": "$(echo "$name" | tr '[:lower:]' '[:upper:]')",
+    "displayname": $display_name_json,
+    "distinguishedname": "$dn_upper",
+    "domainsid": "$domain_sid",
+    "certificatenameflag": $cert_name_flag,
+    "enrollmentflag": $enrollment_flag,
+    "privatekeyflag": $private_key_flag,
+    "certificateapplicationpolicy": $eku_json,
+    "extendedkeyusage": $eku_json,
+    "authorizedsignatures": $ra_signature,
+    "schemaversion": $schema_version,
+    "validityperiod": "",
+    "renewalperiod": "",
+    "minimumrsakeylength": $min_key_size,
+    "enrolleesuppliessubject": $enrollee_supplies_subject,
+    "requiresmanagerapproval": $requires_manager_approval,
+    "authenticationenabled": $authentication_enabled
+  },
+  "Aces": $aces_json
+}
+CERTTEMPLATEEOF
+)")
+                ((certtemplate_count++))
+            fi
+        done < "$certtemplates_file"
+        
+        if [ ${#certtemplates_data[@]} -gt 0 ]; then
+            local certtemplates_file_out="${output_prefix}_certtemplates_${timestamp}.json"
+            local certtemplates_json=$(IFS=,; echo "${certtemplates_data[*]}")
+            cat > "$certtemplates_file_out" <<EOF
+{
+  "data": [
+    $certtemplates_json
+  ],
+  "meta": {
+    "type": "certtemplates",
+    "count": $certtemplate_count,
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
+  }
+}
+EOF
+            files_created+=("$certtemplates_file_out")
+            echo "INFO: Créé $certtemplates_file_out ($certtemplate_count Certificate Templates)" >&2
+        fi
+    fi
+    
+    local aiacas_file="/tmp/bashhound_aiacas_$$"
+    if [ -f "$aiacas_file" ] && [ -s "$aiacas_file" ]; then
+        local aiacas_data=()
+        local aiaca_count=0
+        
+        while IFS='|' read -r dn name display_name dns_hostname cert_templates; do
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local display_name_json="null"
+                if [ -n "$display_name" ]; then
+                    display_name="${display_name//\\/\\\\}"
+                    display_name="${display_name//\"/\\\"}"
+                    display_name_json="\"$display_name\""
+                fi
+                
+                local dns_hostname_json="null"
+                if [ -n "$dns_hostname" ]; then
+                    dns_hostname_json="\"$(echo "$dns_hostname" | tr '[:lower:]' '[:upper:]')\""
+                fi
+                
+                local enabled_templates_json="[]"
+                if [ -n "$cert_templates" ]; then
+                    local template_objs=()
+                    IFS=',' read -ra template_array <<< "$cert_templates"
+                    for template_name in "${template_array[@]}"; do
+                        local template_name_upper=$(echo "$template_name" | tr '[:lower:]' '[:upper:]')
+                        local template_dn="CN=${template_name_upper},CN=CERTIFICATE TEMPLATES,CN=PUBLIC KEY SERVICES,CN=SERVICES,CN=CONFIGURATION,$DOMAIN_DN"
+                        local template_dn_upper=$(echo "$template_dn" | tr '[:lower:]' '[:upper:]')
+                        local template_id=$(echo -n "$template_dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                        template_objs+=("{\"ObjectIdentifier\": \"$template_id\", \"ObjectType\": \"CertTemplate\"}")
+                    done
+                    if [ ${#template_objs[@]} -gt 0 ]; then
+                        enabled_templates_json="[$(IFS=,; echo "${template_objs[*]}")]"
+                    fi
+                fi
+                
+                local aces_json=$(build_aces_json_aiaca "$object_id")
+                
+                aiacas_data+=("$(cat <<AIACAEOF
+{
+  "ObjectIdentifier": "$object_id",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "Properties": {
+    "domain": "$domain_upper",
+    "name": "$(echo "$name" | tr '[:lower:]' '[:upper:]')",
+    "displayname": $display_name_json,
+    "distinguishedname": "$dn_upper",
+    "domainsid": "$domain_sid",
+    "dnshostname": $dns_hostname_json,
+    "certthumbprint": "",
+    "certname": "",
+    "certchain": []
+  },
+  "EnabledCertTemplates": $enabled_templates_json,
+  "Aces": $aces_json
+}
+AIACAEOF
+)")
+                ((aiaca_count++))
+            fi
+        done < "$aiacas_file"
+        
+        if [ ${#aiacas_data[@]} -gt 0 ]; then
+            local aiacas_file_out="${output_prefix}_aiacas_${timestamp}.json"
+            local aiacas_json=$(IFS=,; echo "${aiacas_data[*]}")
+            cat > "$aiacas_file_out" <<EOF
+{
+  "data": [
+    $aiacas_json
+  ],
+  "meta": {
+    "type": "aiacas",
+    "count": $aiaca_count,
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
+  }
+}
+EOF
+            files_created+=("$aiacas_file_out")
+            echo "INFO: Créé $aiacas_file_out ($aiaca_count Enterprise CAs)" >&2
+        fi
     fi
     
     printf '%s\n' "${files_created[@]}"

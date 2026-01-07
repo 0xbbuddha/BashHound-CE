@@ -51,9 +51,11 @@ COLLECTED_OUS="/tmp/bashhound_ous_$$"
 COLLECTED_CONTAINERS="/tmp/bashhound_containers_$$"
 COLLECTED_TRUSTS="/tmp/bashhound_trusts_$$"
 COLLECTED_ACES="/tmp/bashhound_aces_$$"
+COLLECTED_CERTTEMPLATES="/tmp/bashhound_certtemplates_$$"
+COLLECTED_AIACAS="/tmp/bashhound_aiacas_$$"
 
 # Export variables for export_ce.sh to use (needed for ContainedBy resolution)
-export COLLECTED_OUS COLLECTED_CONTAINERS
+export COLLECTED_OUS COLLECTED_CONTAINERS COLLECTED_CERTTEMPLATES COLLECTED_AIACAS
 
 # Cleanup temporary files on script exit
 # Note: Cleanup is now handled by the main script after export to avoid
@@ -602,4 +604,143 @@ collect_containers() {
     done
     
     echo "INFO: $count containers collectés et parsés" >&2
+}
+
+################################################################################
+# collect_cert_templates - Collect AD CS Certificate Templates
+#
+# Queries CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration
+# for all pKICertificateTemplate objects.
+#
+# Attributes collected:
+# - distinguishedName, name, displayName
+# - msPKI-Certificate-Name-Flag (bitmask for ESC1 detection)
+# - msPKI-Enrollment-Flag (bitmask for manager approval)
+# - msPKI-Private-Key-Flag (bitmask for key archival)
+# - pKIExtendedKeyUsage (OIDs for certificate usage)
+# - msPKI-Certificate-Application-Policy
+# - msPKI-RA-Signature (number of signatures required)
+# - pKIExpirationPeriod, pKIOverlapPeriod
+# - nTSecurityDescriptor (ACLs)
+#
+# Results stored in: COLLECTED_CERTTEMPLATES, COLLECTED_ACES
+################################################################################
+collect_cert_templates() {
+    echo "INFO: Collecte des Certificate Templates..." >&2
+    
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
+    local templates_dn="CN=Certificate Templates,$pki_dn"
+    
+    local attributes="distinguishedName,name,displayName,msPKI-Certificate-Name-Flag,msPKI-Enrollment-Flag,msPKI-Private-Key-Flag,pKIExtendedKeyUsage,msPKI-Certificate-Application-Policy,msPKI-RA-Signature,msPKI-Template-Schema-Version,pKIExpirationPeriod,pKIOverlapPeriod,msPKI-Minimal-Key-Size,nTSecurityDescriptor"
+    
+    local results=$(ldap_search "$templates_dn" 1 "(objectClass=pKICertificateTemplate)" "$attributes")
+    
+    if [ -z "$results" ]; then
+        echo "WARN: Aucun Certificate Template trouvé (AD CS pas configuré ?)" >&2
+        return 0
+    fi
+    
+    local count=0
+    > "$COLLECTED_CERTTEMPLATES"
+    
+    while IFS= read -r line; do
+        if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+            local dn=$(extract_dn_from_response "$line")
+            local name=$(extract_attribute_value "$line" "name")
+            local display_name=$(extract_attribute_value "$line" "displayName")
+            local cert_name_flag=$(extract_pki_cert_name_flag "$line")
+            local enrollment_flag=$(extract_pki_enrollment_flag "$line")
+            local private_key_flag=$(extract_pki_private_key_flag "$line")
+            local eku=$(extract_attribute_value "$line" "pKIExtendedKeyUsage")
+            local app_policy=$(extract_attribute_value "$line" "msPKI-Certificate-Application-Policy")
+            local ra_signature=$(extract_attribute_value "$line" "msPKI-RA-Signature")
+            local schema_version=$(extract_attribute_value "$line" "msPKI-Template-Schema-Version")
+            local min_key_size=$(extract_attribute_value "$line" "msPKI-Minimal-Key-Size")
+            
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                echo "$dn|$name|$display_name|$cert_name_flag|$enrollment_flag|$private_key_flag|$eku|$app_policy|$ra_signature|$schema_version|$min_key_size" >> "$COLLECTED_CERTTEMPLATES"
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local aces=$(extract_aces_from_ldap_response "$line")
+                if [ -n "$aces" ]; then
+                    while IFS='|' read -r principal_sid right_name is_inherited; do
+                        if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                            echo "$object_id|CertTemplate|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                        fi
+                    done <<< "$aces"
+                fi
+                
+                ((count++))
+            fi
+        fi
+    done <<< "$results"
+    
+    echo "INFO: $count Certificate Templates collectés" >&2
+}
+
+################################################################################
+# collect_enterprise_cas - Collect AD CS Enterprise Certificate Authorities
+#
+# Queries CN=Enrollment Services,CN=Public Key Services,CN=Services,CN=Configuration
+# for all pKIEnrollmentService objects.
+#
+# Attributes collected:
+# - distinguishedName, name, displayName, dNSHostName
+# - certificateTemplates (list of enabled template names)
+# - cACertificate (binary certificate)
+# - nTSecurityDescriptor (ACLs)
+#
+# Results stored in: COLLECTED_AIACAS, COLLECTED_ACES
+################################################################################
+collect_enterprise_cas() {
+    echo "INFO: Collecte des Enterprise CAs..." >&2
+    
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
+    local enrollment_dn="CN=Enrollment Services,$pki_dn"
+    
+    local attributes="distinguishedName,name,displayName,dNSHostName,certificateTemplates,cACertificate,nTSecurityDescriptor"
+    
+    local results=$(ldap_search "$enrollment_dn" 1 "(objectClass=pKIEnrollmentService)" "$attributes")
+    
+    if [ -z "$results" ]; then
+        echo "WARN: Aucune Enterprise CA trouvée (AD CS pas configuré ?)" >&2
+        return 0
+    fi
+    
+    local count=0
+    > "$COLLECTED_AIACAS"
+    
+    while IFS= read -r line; do
+        if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+            local dn=$(extract_dn_from_response "$line")
+            local name=$(extract_attribute_value "$line" "name")
+            local display_name=$(extract_attribute_value "$line" "displayName")
+            local dns_hostname=$(extract_attribute_value "$line" "dNSHostName")
+            local cert_templates=$(extract_multivalued_attribute "$line" "certificateTemplates")
+            
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                echo "$dn|$name|$display_name|$dns_hostname|$cert_templates" >> "$COLLECTED_AIACAS"
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local aces=$(extract_aces_from_ldap_response "$line")
+                if [ -n "$aces" ]; then
+                    while IFS='|' read -r principal_sid right_name is_inherited; do
+                        if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                            echo "$object_id|AIACA|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                        fi
+                    done <<< "$aces"
+                fi
+                
+                ((count++))
+            fi
+        fi
+    done <<< "$results"
+    
+    echo "INFO: $count Enterprise CAs collectées" >&2
 }

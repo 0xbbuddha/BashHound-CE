@@ -559,3 +559,180 @@ parse_all_entries() {
     echo "[${entries[*]}]"
 }
 
+################################################################################
+# AD CS PKI Bitmask Parsers
+################################################################################
+
+################################################################################
+# extract_pki_cert_name_flag - Extract msPKI-Certificate-Name-Flag bitmask
+#
+# Args:
+#   $1 - hex_response: Full LDAP response hex string
+#
+# Returns:
+#   Integer value of the flag (default: 0)
+#
+# Flags (MS-CRTD 2.26):
+#   0x00000001 = ENROLLEE_SUPPLIES_SUBJECT (ESC1 indicator)
+#   0x00010000 = ENROLLEE_SUPPLIES_SUBJECT_ALT_NAME
+#   0x02000000 = SUBJECT_ALT_REQUIRE_UPN
+################################################################################
+extract_pki_cert_name_flag() {
+    local hex_response="$1"
+    
+    local attr_hex="6d 73 50 4b 49 2d 43 65 72 74 69 66 69 63 61 74 65 2d 4e 61 6d 65 2d 46 6c 61 67"
+    attr_hex=$(echo "$attr_hex" | tr -d ' ')
+    
+    if [[ "$hex_response" =~ $attr_hex ]]; then
+        local after_attr="${hex_response#*$attr_hex}"
+        
+        if [[ "$after_attr" =~ 3184([0-9a-fA-F]{8})0202([0-9a-fA-F]{4}) ]]; then
+            local value_hex="${BASH_REMATCH[2]}"
+            echo $((16#$value_hex))
+            return 0
+        elif [[ "$after_attr" =~ 310402020001020[24]([0-9a-fA-F]{8}) ]]; then
+            local value_hex="${BASH_REMATCH[1]}"
+            local decimal=0
+            for ((i=0; i<8; i+=2)); do
+                local byte="${value_hex:$i:2}"
+                decimal=$((decimal * 256 + 16#$byte))
+            done
+            echo "$decimal"
+            return 0
+        fi
+    fi
+    
+    echo "0"
+}
+
+################################################################################
+# extract_pki_enrollment_flag - Extract msPKI-Enrollment-Flag bitmask
+#
+# Args:
+#   $1 - hex_response: Full LDAP response hex string
+#
+# Returns:
+#   Integer value of the flag (default: 0)
+#
+# Flags (MS-CRTD 2.27):
+#   0x00000002 = PEND_ALL_REQUESTS (requires manager approval)
+#   0x00000020 = AUTO_ENROLLMENT
+#   0x00000100 = USER_INTERACTION_REQUIRED
+################################################################################
+extract_pki_enrollment_flag() {
+    local hex_response="$1"
+    
+    local attr_hex="6d 73 50 4b 49 2d 45 6e 72 6f 6c 6c 6d 65 6e 74 2d 46 6c 61 67"
+    attr_hex=$(echo "$attr_hex" | tr -d ' ')
+    
+    if [[ "$hex_response" =~ $attr_hex ]]; then
+        local after_attr="${hex_response#*$attr_hex}"
+        
+        if [[ "$after_attr" =~ 3184([0-9a-fA-F]{8})0202([0-9a-fA-F]{4}) ]]; then
+            local value_hex="${BASH_REMATCH[2]}"
+            echo $((16#$value_hex))
+            return 0
+        elif [[ "$after_attr" =~ 310402020001020[24]([0-9a-fA-F]{8}) ]]; then
+            local value_hex="${BASH_REMATCH[1]}"
+            local decimal=0
+            for ((i=0; i<8; i+=2)); do
+                local byte="${value_hex:$i:2}"
+                decimal=$((decimal * 256 + 16#$byte))
+            done
+            echo "$decimal"
+            return 0
+        fi
+    fi
+    
+    echo "0"
+}
+
+################################################################################
+# extract_pki_private_key_flag - Extract msPKI-Private-Key-Flag bitmask
+#
+# Args:
+#   $1 - hex_response: Full LDAP response hex string
+#
+# Returns:
+#   Integer value of the flag (default: 0)
+#
+# Flags (MS-CRTD 2.28):
+#   0x00000001 = REQUIRE_PRIVATE_KEY_ARCHIVAL
+#   0x00000010 = EXPORTABLE_KEY (allows key export)
+#   0x00000020 = STRONG_KEY_PROTECTION_REQUIRED
+################################################################################
+extract_pki_private_key_flag() {
+    local hex_response="$1"
+    
+    local attr_hex="6d 73 50 4b 49 2d 50 72 69 76 61 74 65 2d 4b 65 79 2d 46 6c 61 67"
+    attr_hex=$(echo "$attr_hex" | tr -d ' ')
+    
+    if [[ "$hex_response" =~ $attr_hex ]]; then
+        local after_attr="${hex_response#*$attr_hex}"
+        
+        if [[ "$after_attr" =~ 3184([0-9a-fA-F]{8})0202([0-9a-fA-F]{4}) ]]; then
+            local value_hex="${BASH_REMATCH[2]}"
+            echo $((16#$value_hex))
+            return 0
+        elif [[ "$after_attr" =~ 310402020001020[24]([0-9a-fA-F]{8}) ]]; then
+            local value_hex="${BASH_REMATCH[1]}"
+            local decimal=0
+            for ((i=0; i<8; i+=2)); do
+                local byte="${value_hex:$i:2}"
+                decimal=$((decimal * 256 + 16#$byte))
+            done
+            echo "$decimal"
+            return 0
+        fi
+    fi
+    
+    echo "0"
+}
+
+################################################################################
+# extract_multivalued_attribute - Extract multi-valued string attribute
+#
+# Args:
+#   $1 - hex_response: Full LDAP response hex string
+#   $2 - attribute_name: Name of attribute to extract
+#
+# Returns:
+#   Comma-separated list of values
+#
+# Used for: certificateTemplates, pKIExtendedKeyUsage
+################################################################################
+extract_multivalued_attribute() {
+    local hex_response="$1"
+    local attr_name="$2"
+    
+    local attr_hex=$(echo -n "$attr_name" | xxd -p | tr -d '\n')
+    
+    if [[ "$hex_response" =~ $attr_hex ]]; then
+        local after_attr="${hex_response#*$attr_hex}"
+        local values=()
+        
+        while [[ "$after_attr" =~ 04([0-9a-fA-F]{2})([0-9a-fA-F]+) ]]; do
+            local len_hex="${BASH_REMATCH[1]}"
+            local len=$((16#$len_hex))
+            local value_hex="${BASH_REMATCH[2]:0:$((len*2))}"
+            
+            local value=$(echo "$value_hex" | xxd -r -p 2>/dev/null)
+            if [ -n "$value" ]; then
+                values+=("$value")
+            fi
+            
+            after_attr="${after_attr#*${BASH_REMATCH[0]}}"
+            
+            [[ ! "$after_attr" =~ ^04 ]] && break
+        done
+        
+        if [ ${#values[@]} -gt 0 ]; then
+            local IFS=','
+            echo "${values[*]}"
+            return 0
+        fi
+    fi
+    
+    echo ""
+}
+

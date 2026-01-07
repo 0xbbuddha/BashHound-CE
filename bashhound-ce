@@ -264,7 +264,7 @@ main() {
     # -------------------------------------------------------------------------
     case "$COLLECTION_METHOD" in
         # All: Complete collection (default)
-        # Collects: domain, users, groups, computers, GPOs, OUs, containers, trusts
+        # Collects: domain, users, groups, computers, GPOs, OUs, containers, trusts, AD CS
         All|all|ALL)
             if [ "$VERBOSE" = "true" ]; then
                 collector_init_domain "$DOMAIN" 2>&1
@@ -276,6 +276,8 @@ main() {
                 collect_ous 2>&1 || true
                 collect_containers 2>&1 || true
                 collect_trusts 2>&1 || true
+                collect_cert_templates 2>&1 || true
+                collect_enterprise_cas 2>&1 || true
             else
                 collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
                 collect_domain_info >/dev/null 2>&1 || true
@@ -286,6 +288,8 @@ main() {
                 collect_ous >/dev/null 2>&1 || true
                 collect_containers >/dev/null 2>&1 || true
                 collect_trusts >/dev/null 2>&1 || true
+                collect_cert_templates >/dev/null 2>&1 || true
+                collect_enterprise_cas >/dev/null 2>&1 || true
             fi
             ;;
         # DCOnly: Same as All but designed for DC-only enumeration
@@ -301,6 +305,8 @@ main() {
                 collect_ous 2>&1 || true
                 collect_containers 2>&1 || true
                 collect_trusts 2>&1 || true
+                collect_cert_templates 2>&1 || true
+                collect_enterprise_cas 2>&1 || true
             else
                 collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
                 collect_domain_info >/dev/null 2>&1 || true
@@ -311,6 +317,8 @@ main() {
                 collect_ous >/dev/null 2>&1 || true
                 collect_containers >/dev/null 2>&1 || true
                 collect_trusts >/dev/null 2>&1 || true
+                collect_cert_templates >/dev/null 2>&1 || true
+                collect_enterprise_cas >/dev/null 2>&1 || true
             fi
             ;;
         # Trusts: Collect only domain trust relationships
@@ -412,7 +420,8 @@ main() {
                 # Cleanup temporary collection files
                 rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
                       "/tmp/bashhound_domains_$$" "/tmp/bashhound_gpos_$$" "/tmp/bashhound_ous_$$" \
-                      "/tmp/bashhound_containers_$$" "/tmp/bashhound_trusts_$$" "/tmp/bashhound_aces_$$" 2>/dev/null
+                      "/tmp/bashhound_containers_$$" "/tmp/bashhound_trusts_$$" "/tmp/bashhound_aces_$$" \
+                      "/tmp/bashhound_certtemplates_$$" "/tmp/bashhound_aiacas_$$" 2>/dev/null
                 
                 if [ "$ZIP_ONLY" = "true" ]; then
                     rm -f "${created_files[@]}"
