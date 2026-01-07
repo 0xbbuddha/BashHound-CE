@@ -196,7 +196,14 @@ collect_users() {
                 sam=$(echo "$dn" | grep -oP 'CN=\K[^,]+' | head -1)
             fi
             
-            if [[ "$sam" =~ \$$ ]]; then
+            # Skip computer accounts (UAC flag 0x1000 = WORKSTATION_TRUST_ACCOUNT)
+            # But keep trust accounts like "domain-ext$" which are important for BloodHound
+            if [ -n "$uac" ] && (( uac & 0x1000 )); then
+                continue
+            fi
+            
+            # Skip objects in OU=Domain Controllers (they're collected as computers)
+            if [[ "$dn" =~ OU=Domain\ Controllers, ]]; then
                 continue
             fi
             
@@ -223,6 +230,14 @@ collect_users() {
             fi
         fi
     done <<< "$results"
+    
+    # Add well-known SIDs as synthetic users (like RustHound does)
+    # These are system accounts that don't exist in LDAP but are important for BloodHound
+    local domain_upper=$(echo "$DOMAIN_NAME" | tr '[:lower:]' '[:upper:]')
+    
+    # NT AUTHORITY (S-1-5-20 = NETWORK SERVICE)
+    echo "|NT AUTHORITY|${domain_upper}-S-1-5-20|0|||-1|-1|-1|-1|0|0|" >> "$COLLECTED_USERS"
+    ((count++))
     
     echo "INFO: $count utilisateurs collectés et parsés" >&2
 }
