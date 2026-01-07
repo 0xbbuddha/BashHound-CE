@@ -52,10 +52,10 @@ COLLECTED_CONTAINERS="/tmp/bashhound_containers_$$"
 COLLECTED_TRUSTS="/tmp/bashhound_trusts_$$"
 COLLECTED_ACES="/tmp/bashhound_aces_$$"
 COLLECTED_CERTTEMPLATES="/tmp/bashhound_certtemplates_$$"
-COLLECTED_AIACAS="/tmp/bashhound_aiacas_$$"
+COLLECTED_ENTERPRISECAS="/tmp/bashhound_enterprisecas_$$"
 
 # Export variables for export_ce.sh to use (needed for ContainedBy resolution)
-export COLLECTED_OUS COLLECTED_CONTAINERS COLLECTED_CERTTEMPLATES COLLECTED_AIACAS
+export COLLECTED_OUS COLLECTED_CONTAINERS COLLECTED_CERTTEMPLATES COLLECTED_ENTERPRISECAS
 
 # Cleanup temporary files on script exit
 # Note: Cleanup is now handled by the main script after export to avoid
@@ -712,7 +712,7 @@ collect_enterprise_cas() {
     fi
     
     local count=0
-    > "$COLLECTED_AIACAS"
+    > "$COLLECTED_ENTERPRISECAS"
     
     while IFS= read -r line; do
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
@@ -723,7 +723,7 @@ collect_enterprise_cas() {
             local cert_templates=$(extract_multivalued_attribute "$line" "certificateTemplates")
             
             if [ -n "$dn" ] && [ -n "$name" ]; then
-                echo "$dn|$name|$display_name|$dns_hostname|$cert_templates" >> "$COLLECTED_AIACAS"
+                echo "$dn|$name|$display_name|$dns_hostname|$cert_templates" >> "$COLLECTED_ENTERPRISECAS"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -732,7 +732,7 @@ collect_enterprise_cas() {
                 if [ -n "$aces" ]; then
                     while IFS='|' read -r principal_sid right_name is_inherited; do
                         if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
-                            echo "$object_id|AIACA|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                            echo "$object_id|EnterpriseCA|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
                         fi
                     done <<< "$aces"
                 fi

@@ -421,7 +421,7 @@ main() {
                 rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
                       "/tmp/bashhound_domains_$$" "/tmp/bashhound_gpos_$$" "/tmp/bashhound_ous_$$" \
                       "/tmp/bashhound_containers_$$" "/tmp/bashhound_trusts_$$" "/tmp/bashhound_aces_$$" \
-                      "/tmp/bashhound_certtemplates_$$" "/tmp/bashhound_aiacas_$$" 2>/dev/null
+                      "/tmp/bashhound_certtemplates_$$" "/tmp/bashhound_enterprisecas_$$" 2>/dev/null
                 
                 if [ "$ZIP_ONLY" = "true" ]; then
                     rm -f "${created_files[@]}"

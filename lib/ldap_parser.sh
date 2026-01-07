@@ -711,19 +711,36 @@ extract_multivalued_attribute() {
         local after_attr="${hex_response#*$attr_hex}"
         local values=()
         
-        while [[ "$after_attr" =~ 04([0-9a-fA-F]{2})([0-9a-fA-F]+) ]]; do
-            local len_hex="${BASH_REMATCH[1]}"
-            local len=$((16#$len_hex))
-            local value_hex="${BASH_REMATCH[2]:0:$((len*2))}"
-            
-            local value=$(echo "$value_hex" | xxd -r -p 2>/dev/null)
-            if [ -n "$value" ]; then
-                values+=("$value")
+        # Extract all OCTET STRING values (tag 04)
+        local remaining="$after_attr"
+        local found=0
+        
+        for ((i=0; i<100; i++)); do
+            if [[ "$remaining" =~ 04([0-9a-fA-F]{2})([0-9a-fA-F]{2,}) ]]; then
+                local len_hex="${BASH_REMATCH[1]}"
+                local len=$((16#$len_hex))
+                
+                # Skip if length is 0 or > 255 (likely not a real value)
+                if [ $len -eq 0 ] || [ $len -gt 255 ]; then
+                    remaining="${remaining:4}"
+                    continue
+                fi
+                
+                local start_pos=$(echo "$remaining" | grep -b -o '04'"$len_hex" | head -1 | cut -d: -f1)
+                local value_start=$((start_pos + 4))
+                local value_hex="${remaining:$value_start:$((len*2))}"
+                
+                local value=$(echo "$value_hex" | xxd -r -p 2>/dev/null)
+                if [ -n "$value" ] && [[ ! "$value" =~ ^[[:cntrl:]] ]]; then
+                    values+=("$value")
+                    found=1
+                fi
+                
+                # Move past this value
+                remaining="${remaining:$((value_start + len*2))}"
+            else
+                break
             fi
-            
-            after_attr="${after_attr#*${BASH_REMATCH[0]}}"
-            
-            [[ ! "$after_attr" =~ ^04 ]] && break
         done
         
         if [ ${#values[@]} -gt 0 ]; then

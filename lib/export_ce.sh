@@ -178,7 +178,7 @@ ACEJSON
     fi
 }
 
-build_aces_json_aiaca() {
+build_aces_json_enterpriseca() {
     local object_id="$1"
     local aces_file="/tmp/bashhound_aces_$$"
     
@@ -190,7 +190,7 @@ build_aces_json_aiaca() {
     local ace_objs=()
     
     while IFS='|' read -r obj_id obj_type principal_sid right_name is_inherited; do
-        if [ "$obj_id" = "$object_id" ] && [ "$obj_type" = "AIACA" ] && [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+        if [ "$obj_id" = "$object_id" ] && [ "$obj_type" = "EnterpriseCA" ] && [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
             local principal_type=$(resolve_principal_type "$principal_sid")
             
             local ace_json=$(cat <<ACEJSON
@@ -1219,6 +1219,16 @@ EOF
                     requires_manager_approval="true"
                 fi
                 
+                local no_security_extension="false"
+                if (( enrollment_flag & 524288 )); then
+                    no_security_extension="true"
+                fi
+                
+                local subject_alt_require_upn="false"
+                if (( cert_name_flag & 33554432 )); then
+                    subject_alt_require_upn="true"
+                fi
+                
                 local authentication_enabled="false"
                 if [[ "$eku" =~ 1\.3\.6\.1\.5\.5\.7\.3\.2 ]] || [[ "$eku" =~ 1\.3\.6\.1\.4\.1\.311\.20\.2\.2 ]]; then
                     authentication_enabled="true"
@@ -1237,6 +1247,7 @@ EOF
                 fi
                 
                 local aces_json=$(build_aces_json_certtemplate "$object_id")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
                 
                 certtemplates_data+=("$(cat <<CERTTEMPLATEEOF
 {
@@ -1249,21 +1260,30 @@ EOF
     "displayname": $display_name_json,
     "distinguishedname": "$dn_upper",
     "domainsid": "$domain_sid",
+    "isaclprotected": false,
+    "description": null,
+    "whencreated": -1,
     "certificatenameflag": $cert_name_flag,
     "enrollmentflag": $enrollment_flag,
     "privatekeyflag": $private_key_flag,
+    "effectiveekus": $eku_json,
     "certificateapplicationpolicy": $eku_json,
-    "extendedkeyusage": $eku_json,
+    "ekus": $eku_json,
+    "applicationpolicies": $eku_json,
     "authorizedsignatures": $ra_signature,
     "schemaversion": $schema_version,
     "validityperiod": "",
     "renewalperiod": "",
-    "minimumrsakeylength": $min_key_size,
+    "oid": "",
     "enrolleesuppliessubject": $enrollee_supplies_subject,
     "requiresmanagerapproval": $requires_manager_approval,
-    "authenticationenabled": $authentication_enabled
+    "authenticationenabled": $authentication_enabled,
+    "nosecurityextension": $no_security_extension,
+    "subjectaltrequireupn": $subject_alt_require_upn,
+    "issuancepolicies": []
   },
-  "Aces": $aces_json
+  "Aces": $aces_json,
+  "ContainedBy": $contained_by
 }
 CERTTEMPLATEEOF
 )")
@@ -1280,6 +1300,7 @@ CERTTEMPLATEEOF
     $certtemplates_json
   ],
   "meta": {
+    "methods": 0,
     "type": "certtemplates",
     "count": $certtemplate_count,
     "version": 6,
@@ -1292,10 +1313,10 @@ EOF
         fi
     fi
     
-    local aiacas_file="/tmp/bashhound_aiacas_$$"
-    if [ -f "$aiacas_file" ] && [ -s "$aiacas_file" ]; then
-        local aiacas_data=()
-        local aiaca_count=0
+    local enterprisecas_file="/tmp/bashhound_enterprisecas_$$"
+    if [ -f "$enterprisecas_file" ] && [ -s "$enterprisecas_file" ]; then
+        local enterprisecas_data=()
+        local enterpriseca_count=0
         
         while IFS='|' read -r dn name display_name dns_hostname cert_templates; do
             if [ -n "$dn" ] && [ -n "$name" ]; then
@@ -1331,51 +1352,89 @@ EOF
                     fi
                 fi
                 
-                local aces_json=$(build_aces_json_aiaca "$object_id")
+                local aces_json=$(build_aces_json_enterpriseca "$object_id")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
                 
-                aiacas_data+=("$(cat <<AIACAEOF
+                enterprisecas_data+=("$(cat <<ENTERPRISECAEOF
 {
   "ObjectIdentifier": "$object_id",
   "IsDeleted": false,
   "IsACLProtected": false,
   "Properties": {
     "domain": "$domain_upper",
-    "name": "$(echo "$name" | tr '[:lower:]' '[:upper:]')",
+    "name": "$(echo "$name" | tr '[:lower:]' '[:upper:]')@$domain_upper",
     "displayname": $display_name_json,
     "distinguishedname": "$dn_upper",
     "domainsid": "$domain_sid",
+    "isaclprotected": false,
+    "description": null,
+    "whencreated": -1,
+    "flags": "",
+    "caname": "$(echo "$name" | tr '[:lower:]' '[:upper:]')",
     "dnshostname": $dns_hostname_json,
     "certthumbprint": "",
     "certname": "",
-    "certchain": []
+    "certchain": [],
+    "hasbasicconstraints": false,
+    "basicconstraintpathlength": 0,
+    "unresolvedpublishedtemplates": [],
+    "casecuritycollected": false,
+    "enrollmentagentrestrictionscollected": false,
+    "isuserspecifiessanenabledcollected": false,
+    "roleseparationenabledcollected": false
+  },
+  "HostingComputer": "",
+  "CARegistryData": {
+    "CASecurity": {
+      "Data": [],
+      "Collected": false,
+      "FailureReason": "Requires WinRM/RPC (not available via LDAP)"
+    },
+    "EnrollmentAgentRestrictions": {
+      "Restrictions": [],
+      "Collected": false,
+      "FailureReason": "Requires WinRM/RPC (not available via LDAP)"
+    },
+    "IsUserSpecifiesSanEnabled": {
+      "Value": false,
+      "Collected": false,
+      "FailureReason": "Requires WinRM/RPC (not available via LDAP)"
+    },
+    "RoleSeparationEnabled": {
+      "Value": false,
+      "Collected": false,
+      "FailureReason": "Requires WinRM/RPC (not available via LDAP)"
+    }
   },
   "EnabledCertTemplates": $enabled_templates_json,
-  "Aces": $aces_json
+  "Aces": $aces_json,
+  "ContainedBy": $contained_by
 }
-AIACAEOF
+ENTERPRISECAEOF
 )")
-                ((aiaca_count++))
+                ((enterpriseca_count++))
             fi
-        done < "$aiacas_file"
+        done < "$enterprisecas_file"
         
-        if [ ${#aiacas_data[@]} -gt 0 ]; then
-            local aiacas_file_out="${output_prefix}_aiacas_${timestamp}.json"
-            local aiacas_json=$(IFS=,; echo "${aiacas_data[*]}")
-            cat > "$aiacas_file_out" <<EOF
+        if [ ${#enterprisecas_data[@]} -gt 0 ]; then
+            local enterprisecas_file_out="${output_prefix}_enterprisecas_${timestamp}.json"
+            local enterprisecas_json=$(IFS=,; echo "${enterprisecas_data[*]}")
+            cat > "$enterprisecas_file_out" <<EOF
 {
   "data": [
-    $aiacas_json
+    $enterprisecas_json
   ],
   "meta": {
-    "type": "aiacas",
-    "count": $aiaca_count,
+    "methods": 0,
+    "type": "enterprisecas",
+    "count": $enterpriseca_count,
     "version": 6,
     "collectorversion": "BashHound-CE v1.0"
   }
 }
 EOF
-            files_created+=("$aiacas_file_out")
-            echo "INFO: Créé $aiacas_file_out ($aiaca_count Enterprise CAs)" >&2
+            files_created+=("$enterprisecas_file_out")
+            echo "INFO: Créé $enterprisecas_file_out ($enterpriseca_count Enterprise CAs)" >&2
         fi
     fi
     
