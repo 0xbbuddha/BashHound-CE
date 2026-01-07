@@ -1,8 +1,49 @@
 #!/usr/bin/env bash
 
+################################################################################
+# acl_parser.sh - Windows Security Descriptor / ACL Parser
+#
+# This module parses Windows Security Descriptors (nTSecurityDescriptor) from
+# Active Directory LDAP responses.
+#
+# Windows Security Architecture:
+# - Security Descriptor (SD): Container for all security info about an object
+#   * Owner SID
+#   * Group SID
+#   * DACL (Discretionary Access Control List) - who can access
+#   * SACL (System Access Control List) - audit logging
+#
+# - ACL: List of ACEs (Access Control Entries)
+# - ACE: Individual permission rule
+#   * ACE Type: Allow, Deny, Audit
+#   * ACE Flags: Inheritance flags
+#   * Access Mask: Permissions (bitmask)
+#   * Object Type GUID: For extended rights (optional)
+#   * SID: Principal (user/group) the rule applies to
+#
+# Binary Format:
+# - Security Descriptor is binary data in hex
+# - Little-endian integer encoding (Windows standard)
+# - GUIDs in Windows GUID format (different from standard UUID)
+#
+# This parser extracts ACEs and maps them to BloodHound rights:
+# - GenericAll, GenericWrite, WriteOwner, WriteDacl
+# - ForceChangePassword, DCSync, AddMember
+# - ReadLAPSPassword, ReadGMSAPassword, WriteSPN
+# - And more...
+#
+# References:
+# - MS-DTYP: Windows Data Types (Security Descriptor format)
+# - MS-ADTS: Active Directory Technical Specification
+################################################################################
+
 [[ -n "${_ACL_PARSER_SH_LOADED:-}" ]] && return 0
 readonly _ACL_PARSER_SH_LOADED=1
 
+# -------------------------------------------------------------------------
+# ACE TYPE CONSTANTS
+# Defines what action the ACE performs (allow, deny, audit)
+# -------------------------------------------------------------------------
 declare -gA ACE_TYPES=(
     [00]="ACCESS_ALLOWED"
     [01]="ACCESS_DENIED"
@@ -22,6 +63,10 @@ declare -gA ACE_TYPES=(
     [10]="SYSTEM_ALARM_CALLBACK_OBJECT"
 )
 
+# -------------------------------------------------------------------------
+# ACE FLAGS CONSTANTS
+# Control ACE inheritance behavior (how it applies to child objects)
+# -------------------------------------------------------------------------
 declare -gA ACE_FLAGS=(
     [01]="OBJECT_INHERIT_ACE"
     [02]="CONTAINER_INHERIT_ACE"
@@ -32,6 +77,11 @@ declare -gA ACE_FLAGS=(
     [40]="FAILED_ACCESS_ACE"
 )
 
+# -------------------------------------------------------------------------
+# ACCESS MASK TO BLOODHOUND RIGHT MAPPING
+# Maps Windows access mask bits to BloodHound permission names
+# Access masks are 32-bit bitmasks with specific bits meaning specific rights
+# -------------------------------------------------------------------------
 declare -gA ACCESS_MASK_TO_RIGHT=(
     [10000000]="GenericAll"
     [20000000]="GenericWrite"
@@ -54,6 +104,11 @@ declare -gA ACCESS_MASK_TO_RIGHT=(
     [00000100]="ExtendedRight"
 )
 
+# -------------------------------------------------------------------------
+# EXTENDED RIGHTS GUIDs
+# Maps AD extended right GUIDs to BloodHound right names
+# Extended rights are special permissions defined by GUIDs in AD schema
+# -------------------------------------------------------------------------
 declare -gA EXTENDED_RIGHTS=(
     ["00299570-246d-11d0-a768-00aa006e0529"]="ForceChangePassword"
     ["1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"]="DCSync"
@@ -64,11 +119,38 @@ declare -gA EXTENDED_RIGHTS=(
     ["bf9679c0-0de6-11d0-a285-00aa003049e2"]="AddMember"
 )
 
+# -------------------------------------------------------------------------
+# PROPERTY SET GUIDs
+# Maps AD property set GUIDs to BloodHound right names
+# Property sets group related attributes (e.g., account restrictions)
+# -------------------------------------------------------------------------
 declare -gA PROPERTY_SETS=(
     ["4c164200-20c0-11d0-a768-00aa006e0529"]="WriteAccountRestrictions"
     ["bc0ac240-79a9-11d0-9020-00c04fc2d4cf"]="WriteMember"
 )
 
+################################################################################
+# parse_sid_from_hex - Parse Windows SID from hex bytes
+#
+# Windows SID Format:
+# - Revision (1 byte)
+# - SubAuthorityCount (1 byte)
+# - IdentifierAuthority (6 bytes, big-endian)
+# - SubAuthorities (4 bytes each, little-endian!)
+#
+# Example SID: S-1-5-21-123456-789012-345678-500
+# - S: Literal "S"
+# - 1: Revision
+# - 5: Identifier Authority
+# - 21-123456-789012-345678: Domain SID
+# - 500: RID (Relative ID)
+#
+# Args:
+#   $1 - hex: Hex string of binary SID
+#
+# Returns:
+#   SID string in S-R-I-SA format
+################################################################################
 parse_sid_from_hex() {
     local hex="$1"
     local len=${#hex}
