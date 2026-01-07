@@ -516,92 +516,97 @@ collect_trusts() {
 collect_containers() {
     echo "INFO: Collecte des containers..." >&2
     
-    local container_names=(
-        "CN=Users"
-        "CN=Computers"
-        "CN=System"
-        "CN=ForeignSecurityPrincipals"
-        "CN=Program Data"
-        "CN=Managed Service Accounts"
-    )
-    
     > "$COLLECTED_CONTAINERS"
     
     local count=0
+    local attributes="distinguishedName,name,description,whenCreated,nTSecurityDescriptor"
     
-    for container_base in "${container_names[@]}"; do
-        local container_dn="${container_base},$DOMAIN_DN"
-        local filter="(objectClass=container)"
-        local attributes="distinguishedName,name,description,whenCreated,nTSecurityDescriptor"
-        
-        local results=$(ldap_search "$container_dn" 0 "(objectClass=*)" "$attributes")
-        
-        if [ -n "$results" ]; then
-            while IFS= read -r line; do
-                if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
-                    local dn=$(extract_dn_from_response "$line")
-                    local name=$(extract_attribute_value "$line" "name")
-                    local description=$(extract_attribute_value "$line" "description")
-                    
-                    if [ -z "$name" ] && [ -n "$dn" ]; then
-                        name=$(echo "$dn" | grep -oP 'CN=\K[^,]+' | head -1)
-                    fi
-                    
-                    if [ -n "$dn" ]; then
-                        echo "$dn|$name|$description" >> "$COLLECTED_CONTAINERS"
-                        
-                        local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
-                        local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
-                        
-                        local aces=$(extract_aces_from_ldap_response "$line")
-                        if [ -n "$aces" ]; then
-                            while IFS='|' read -r principal_sid right_name is_inherited; do
-                                if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
-                                    echo "$object_id|Container|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
-                                fi
-                            done <<< "$aces"
-                        fi
-                        
-                        ((count++))
-                    fi
+    # Collect containers from Domain NC (DC=domain,DC=tld)
+    # Scope 2 = subtree search (recursive)
+    local domain_results=$(ldap_search "$DOMAIN_DN" 2 "(objectClass=container)" "$attributes")
+    
+    if [ -n "$domain_results" ]; then
+        while IFS= read -r line; do
+            if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+                local dn=$(extract_dn_from_response "$line")
+                local name=$(extract_attribute_value "$line" "name")
+                local description=$(extract_attribute_value "$line" "description")
+                
+                if [ -z "$name" ] && [ -n "$dn" ]; then
+                    name=$(echo "$dn" | grep -oP 'CN=\K[^,]+' | head -1)
                 fi
-            done <<< "$results"
-        fi
-        
-        local sub_results=$(ldap_search "$container_dn" 1 "(objectClass=container)" "$attributes")
-        
-        if [ -n "$sub_results" ]; then
-            while IFS= read -r line; do
-                if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
-                    local dn=$(extract_dn_from_response "$line")
-                    local name=$(extract_attribute_value "$line" "name")
-                    local description=$(extract_attribute_value "$line" "description")
-                    
-                    if [ -z "$name" ] && [ -n "$dn" ]; then
-                        name=$(echo "$dn" | grep -oP 'CN=\K[^,]+' | head -1)
-                    fi
-                    
-                    if [ -n "$dn" ]; then
-                        echo "$dn|$name|$description" >> "$COLLECTED_CONTAINERS"
-                        
-                        local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
-                        local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
-                        
-                        local aces=$(extract_aces_from_ldap_response "$line")
-                        if [ -n "$aces" ]; then
-                            while IFS='|' read -r principal_sid right_name is_inherited; do
-                                if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
-                                    echo "$object_id|Container|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
-                                fi
-                            done <<< "$aces"
-                        fi
-                        
-                        ((count++))
-                    fi
+                
+                # Exclude system containers that are not useful for BloodHound analysis  
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                if [[ "$dn_upper" =~ ,CN=OPERATIONS, ]] || \
+                   [[ "$dn_upper" =~ ,CN=LOSTANDFOUND, ]] || \
+                   [[ "$dn_upper" =~ ,CN=DELETED.OBJECTS, ]] || \
+                   [[ "$dn_upper" =~ ,CN=NTDS.QUOTAS, ]]; then
+                    continue
                 fi
-            done <<< "$sub_results"
-        fi
-    done
+                
+                if [ -n "$dn" ]; then
+                    echo "$dn|$name|$description" >> "$COLLECTED_CONTAINERS"
+                    local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                    
+                    local aces=$(extract_aces_from_ldap_response "$line")
+                    if [ -n "$aces" ]; then
+                        while IFS='|' read -r principal_sid right_name is_inherited; do
+                            if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                                echo "$object_id|Container|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                            fi
+                        done <<< "$aces"
+                    fi
+                    
+                    ((count++))
+                fi
+            fi
+        done <<< "$domain_results"
+    fi
+    
+    # Collect containers from Configuration NC (CN=Configuration,DC=domain,DC=tld)
+    # This includes AD CS containers (Certificate Templates, Enrollment Services, etc.)
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local config_results=$(ldap_search "$config_dn" 2 "(objectClass=container)" "$attributes")
+    
+    if [ -n "$config_results" ]; then
+        while IFS= read -r line; do
+            if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+                local dn=$(extract_dn_from_response "$line")
+                local name=$(extract_attribute_value "$line" "name")
+                local description=$(extract_attribute_value "$line" "description")
+                
+                if [ -z "$name" ] && [ -n "$dn" ]; then
+                    name=$(echo "$dn" | grep -oP 'CN=\K[^,]+' | head -1)
+                fi
+                
+                # Exclude system containers that are not useful for BloodHound analysis  
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                if [[ "$dn_upper" =~ ,CN=OPERATIONS, ]] || \
+                   [[ "$dn_upper" =~ ,CN=LOSTANDFOUND, ]] || \
+                   [[ "$dn_upper" =~ ,CN=DELETED.OBJECTS, ]] || \
+                   [[ "$dn_upper" =~ ,CN=NTDS.QUOTAS, ]]; then
+                    continue
+                fi
+                
+                if [ -n "$dn" ]; then
+                    echo "$dn|$name|$description" >> "$COLLECTED_CONTAINERS"
+                    local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                    
+                    local aces=$(extract_aces_from_ldap_response "$line")
+                    if [ -n "$aces" ]; then
+                        while IFS='|' read -r principal_sid right_name is_inherited; do
+                            if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                                echo "$object_id|Container|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                            fi
+                        done <<< "$aces"
+                    fi
+                    
+                    ((count++))
+                fi
+            fi
+        done <<< "$config_results"
+    fi
     
     echo "INFO: $count containers collectés et parsés" >&2
 }
