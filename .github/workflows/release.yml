@@ -26,12 +26,13 @@ jobs:
           echo "tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
           echo "title=${RELEASE_TAG}" >> $GITHUB_OUTPUT
       
-      - name: Create ZIP archive
+      - name: Create archives
         run: |
           mkdir -p release
           cp -r bashhound-ce lib COPYING README.md release/
           cd release
           zip -r ../bashhound-ce.zip .
+          tar czf ../bashhound-ce.tar.gz .
           cd ..
           rm -rf release
       
@@ -44,7 +45,9 @@ jobs:
             Automatic release from commit ${{ github.sha }}
             
             **Changements** : ${{ github.event.head_commit.message }}
-          files: bashhound-ce.zip
+          files: |
+            bashhound-ce.zip
+            bashhound-ce.tar.gz
           draft: false
           prerelease: false
         env:
