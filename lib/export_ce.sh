@@ -927,27 +927,33 @@ EOF
                 
                 local container_guid=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
                 
+                local desc_json="null"
+                if [ -n "$description" ]; then
+                    desc_json=$(printf '%s' "$description" | jq -Rs .)
+                fi
+                
                 local children_json=$(build_child_objects "$dn_upper")
                 
                 local aces_json=$(build_aces_json "$container_guid")
                 
                 containers_data+=("$(cat <<CONTAINEREOF
 {
-  "ObjectIdentifier": "$container_guid",
-  "IsDeleted": false,
-  "IsACLProtected": false,
-  "ContainedBy": null,
   "Properties": {
     "domain": "$domain_upper",
     "name": "$container_name_upper",
     "distinguishedname": "$dn_upper",
     "domainsid": "$domain_sid",
+    "isaclprotected": false,
     "highvalue": false,
-    "whencreated": -1,
-    "isaclprotected": false
+    "description": $desc_json,
+    "whencreated": -1
   },
   "ChildObjects": $children_json,
-  "Aces": $aces_json
+  "Aces": $aces_json,
+  "ContainedBy": null,
+  "IsACLProtected": false,
+  "IsDeleted": false,
+  "ObjectIdentifier": "$container_guid"
 }
 CONTAINEREOF
 )")
