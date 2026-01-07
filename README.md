@@ -53,6 +53,33 @@ Collection Methods:
 
 ---
 
+## Features & Limitations
+
+### ✅ Supported Features
+- **Core Objects**: Users, Groups, Computers, OUs, Domains, GPOs, Containers
+- **Relationships**: Group memberships, ACLs, Trusts
+- **Advanced**:
+  - High-value group detection (well-known SIDs + adminCount)
+  - GPLink parsing with inheritance and enforcement flags
+  - Container export (BloodHound CE v6)
+  - Compatible with any Active Directory domain
+
+### ⚠️ Known Limitations
+- **Sessions**: Session collection is not implemented (requires NetSessionEnum RPC/SMB)
+  - Exports show `"Collected": true` but `"Results": []` to maintain compatibility
+- **AD CS (Certificate Services)**: Not supported
+  - Enterprise CAs require Windows Registry access (impossible via LDAP alone)
+  - Certificate Templates parsing would require complex OID/bitfield handling
+  - Recommendation: Use RustHound-CE or SharpHound for AD CS enumeration
+- **DCRegistryData**: Limited to null values (no remote registry access)
+
+### 🔧 Work in Progress
+- Enhanced attribute parsing (SPN targets, delegation)
+- Functional level detection
+- Password policy parsing
+
+---
+
 ## Disclaimer
 
 <div style="border: 2px solid red; background-color: #ffe6e6; padding: 10px; border-radius: 8px;">

@@ -172,6 +172,52 @@ build_child_objects() {
     fi
 }
 
+# Parse GPLink attribute from LDAP into BloodHound Links format
+# Format: [LDAP://CN={GUID},CN=Policies,...;options][...]
+# Options: 0=enabled, 1=disabled, 2=enabled+enforced, 3=disabled+enforced
+parse_gplinks() {
+    local gplink_raw="$1"
+    
+    if [ -z "$gplink_raw" ] || [ "$gplink_raw" = "null" ]; then
+        echo "[]"
+        return
+    fi
+    
+    local links=()
+    
+    # Extract each [LDAP://...;X] block
+    while [[ "$gplink_raw" =~ \[LDAP://[^\]]+\] ]]; do
+        local block="${BASH_REMATCH[0]}"
+        gplink_raw="${gplink_raw#*${block}}"
+        
+        # Extract GUID from CN={GUID}
+        if [[ "$block" =~ CN=\{([0-9A-Fa-f-]+)\} ]]; then
+            local guid="${BASH_REMATCH[1]}"
+            guid=$(echo "$guid" | tr '[:lower:]' '[:upper:]')
+            
+            # Extract options (last number before ])
+            local options="0"
+            if [[ "$block" =~ \;([0-3])\] ]]; then
+                options="${BASH_REMATCH[1]}"
+            fi
+            
+            # Determine if enforced (bit 1 set: options 2 or 3)
+            local is_enforced="false"
+            if [ "$options" = "2" ] || [ "$options" = "3" ]; then
+                is_enforced="true"
+            fi
+            
+            links+=("{\"IsEnforced\":$is_enforced,\"GUID\":\"$guid\"}")
+        fi
+    done
+    
+    if [ ${#links[@]} -gt 0 ]; then
+        echo "[$(IFS=,; echo "${links[*]}")]"
+    else
+        echo "[]"
+    fi
+}
+
 # Crée plusieurs fichiers JSON séparés par type (format officiel BloodHound)
 # Ref: https://bloodhound.specterops.io/integrations/bloodhound-api/json-formats
 export_create_json_files() {
@@ -376,6 +422,28 @@ EOF
                 if [ "$admin_count" = "1" ]; then
                     admin_count_bool="true"
                     high_value_bool="true"
+                fi
+                
+                # Detect well-known high-value groups by SID pattern (works for any domain)
+                # Check for built-in groups (S-1-5-32-XXX or DOMAIN-S-1-5-32-XXX)
+                if [[ "$sid" =~ S-1-5-32-([0-9]+)$ ]]; then
+                    local builtin_rid="${BASH_REMATCH[1]}"
+                    case "$builtin_rid" in
+                        544) high_value_bool="true" ;;  # Administrators
+                        548) high_value_bool="true" ;;  # Account Operators
+                        549) high_value_bool="true" ;;  # Server Operators
+                        550) high_value_bool="true" ;;  # Print Operators
+                        551) high_value_bool="true" ;;  # Backup Operators
+                    esac
+                # Check for domain groups (S-1-5-21-DOMAIN_SID-RID)
+                elif [[ "$sid" =~ ^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-([0-9]+)$ ]]; then
+                    local domain_rid="${BASH_REMATCH[1]}"
+                    case "$domain_rid" in
+                        512) high_value_bool="true" ;;  # Domain Admins
+                        516) high_value_bool="true" ;;  # Domain Controllers
+                        519) high_value_bool="true" ;;  # Enterprise Admins
+                        520) high_value_bool="true" ;;  # Group Policy Creator Owners
+                    esac
                 fi
                 
                 [ -z "$when_created" ] && when_created="-1"
@@ -741,6 +809,16 @@ TRUSTEOF
             child_objects_json="[$(IFS=,; echo "${child_objs[*]}")]"
         fi
         
+        # Parse GPLinks for domain
+        local domain_gplinks_json="[]"
+        local domains_file="/tmp/bashhound_domains_$$"
+        if [ -f "$domains_file" ] && [ -s "$domains_file" ]; then
+            local domain_gplink_raw=$(head -1 "$domains_file" | cut -d'|' -f2)
+            if [ -n "$domain_gplink_raw" ] && [ "$domain_gplink_raw" != "null" ]; then
+                domain_gplinks_json=$(parse_gplinks "$domain_gplink_raw")
+            fi
+        fi
+        
         local domains_file_out="${output_prefix}_domains_${timestamp}.json"
         cat > "$domains_file_out" <<EOF
 {
@@ -781,7 +859,7 @@ TRUSTEOF
         "AffectedComputers": []
       },
       "ChildObjects": $child_objects_json,
-      "Links": [],
+      "Links": $domain_gplinks_json,
       "ContainedBy": null
     }
   ],
@@ -883,25 +961,10 @@ EOF
                 
                 local ou_guid=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
                 
-                local gpo_links=()
-                if [ -n "$gplink" ]; then
-                    local guids=$(echo "$gplink" | grep -oP '\{[^}]+\}' | tr -d '{}')
-                    while IFS= read -r link_guid; do
-                        if [ -n "$link_guid" ]; then
-                            gpo_links+=("$(cat <<GPLINEOF
-{
-  "IsEnforced": false,
-  "GUID": "$link_guid"
-}
-GPLINEOF
-)")
-                        fi
-                    done <<< "$guids"
-                fi
-                
+                # Parse GPLinks properly (with IsEnforced detection)
                 local links_json="[]"
-                if [ ${#gpo_links[@]} -gt 0 ]; then
-                    links_json="[$(IFS=,; echo "${gpo_links[*]}")]"
+                if [ -n "$gplink" ] && [ "$gplink" != "null" ]; then
+                    links_json=$(parse_gplinks "$gplink")
                 fi
                 
                 local desc_json="null"
