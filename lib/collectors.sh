@@ -52,8 +52,13 @@ COLLECTED_CONTAINERS="/tmp/bashhound_containers_$$"
 COLLECTED_TRUSTS="/tmp/bashhound_trusts_$$"
 COLLECTED_ACES="/tmp/bashhound_aces_$$"
 
+# Export variables for export_ce.sh to use (needed for ContainedBy resolution)
+export COLLECTED_OUS COLLECTED_CONTAINERS
+
 # Cleanup temporary files on script exit
-trap 'rm -f "$COLLECTED_USERS" "$COLLECTED_GROUPS" "$COLLECTED_COMPUTERS" "$COLLECTED_DOMAINS" "$COLLECTED_GPOS" "$COLLECTED_OUS" "$COLLECTED_CONTAINERS" "$COLLECTED_TRUSTS" "$COLLECTED_ACES" 2>/dev/null' EXIT
+# Note: Cleanup is now handled by the main script after export to avoid
+# premature deletion before export_ce.sh can read OUs/Containers
+# trap 'rm -f "$COLLECTED_USERS" "$COLLECTED_GROUPS" "$COLLECTED_COMPUTERS" "$COLLECTED_DOMAINS" "$COLLECTED_GPOS" "$COLLECTED_OUS" "$COLLECTED_CONTAINERS" "$COLLECTED_TRUSTS" "$COLLECTED_ACES" 2>/dev/null' EXIT
 
 ################################################################################
 # collector_init_domain - Initialize domain for collection
@@ -91,18 +96,25 @@ collector_init_domain() {
 collect_domain_info() {
     echo "INFO: Collecte des informations du domaine..." >&2
     
-    local results=$(ldap_search "$DOMAIN_DN" 0 "(objectClass=domain)" "objectSid,name,distinguishedName,nTSecurityDescriptor")
+    local results=$(ldap_search "$DOMAIN_DN" 0 "(objectClass=domain)" "objectSid,name,distinguishedName,gPLink,nTSecurityDescriptor")
     
     if [ -z "$results" ]; then
         echo "WARN: Aucune information de domaine trouvée" >&2
         return 1
     fi
     
+    > "$COLLECTED_DOMAINS"
+    
     while IFS= read -r line; do
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
             local sid=$(extract_sid_from_response "$line")
+            local gplink=$(extract_attribute_value "$line" "gPLink")
+            
             if [ -n "$sid" ]; then
                 DOMAIN_SID="$sid"
+                
+                # Store domain gplink for export
+                echo "$DOMAIN_DN|$gplink" >> "$COLLECTED_DOMAINS"
                 
                 local aces=$(extract_aces_from_ldap_response "$line")
                 if [ -n "$aces" ]; then
@@ -151,12 +163,23 @@ collect_users() {
             local sid=$(extract_sid_from_response "$line")
             local primary_gid=$(extract_primary_group_id "$line")
             
+            # DEBUG: Save first user response for analysis
+            if [ "$count" -eq 0 ] && [ -n "$sam" ]; then
+                echo "$line" > "/tmp/bashhound_debug_user_response.hex"
+                [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: Saved user response to /tmp/bashhound_debug_user_response.hex" >&2
+            fi
+            
             local description=$(extract_attribute_value "$line" "description")
             local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
             local last_logon=$(extract_filetime_timestamp "$line" "lastLogon")
             local last_logon_ts=$(extract_filetime_timestamp "$line" "lastLogontimestamp")
             local pwd_last_set=$(extract_filetime_timestamp "$line" "pwdLastSet")
             local uac=$(extract_uac_flags "$line")
+            
+            # DEBUG: Log extracted values
+            if [ "$count" -eq 0 ] && [ -n "$sam" ]; then
+                [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: User $sam - whenCreated=$when_created, primaryGID=$primary_gid, UAC=$uac" >&2
+            fi
             local admin_count=$(extract_attribute_value "$line" "adminCount")
             
             local spns=$(extract_multi_valued_attribute "$line" "servicePrincipalName")

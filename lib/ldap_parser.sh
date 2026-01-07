@@ -372,16 +372,21 @@ extract_primary_group_id() {
     
     local attr_hex="7072696d61727947726f75704944"
     
-    if [[ "$hex" =~ ${attr_hex}31[0-9a-f]{2}02([0-9a-f]{2})([0-9a-f]+) ]]; then
-        local int_len_hex="${BASH_REMATCH[1]}"
-        local int_len=$((16#$int_len_hex))
-        local remaining="${BASH_REMATCH[2]}"
+    # Format: attrName + 31 + (84 00 00 00 XX | XX) + 04 + YY + ASCII_value
+    # Support both short and long form length encoding
+    if [[ "$hex" =~ ${attr_hex}(31[0-9a-f]{2}|3184[0-9a-f]{8})04([0-9a-f]{2})([0-9a-f]+) ]]; then
+        local str_len_hex="${BASH_REMATCH[2]}"
+        local str_len=$((16#$str_len_hex))
+        local remaining="${BASH_REMATCH[3]}"
         
-        if [ $int_len -le 4 ]; then
-            local int_hex="${remaining:0:$((int_len * 2))}"
-            local int_val=$((16#$int_hex))
-            echo "$int_val"
-            return
+        if [ $str_len -le 10 ]; then
+            # Extract ASCII string and convert to integer
+            local ascii_hex="${remaining:0:$((str_len * 2))}"
+            local ascii_val=$(echo -n "$ascii_hex" | xxd -r -p 2>/dev/null)
+            if [[ "$ascii_val" =~ ^[0-9]+$ ]]; then
+                echo "$ascii_val"
+                return
+            fi
         fi
     fi
     
@@ -394,32 +399,35 @@ extract_filetime_timestamp() {
     
     local attr_hex=$(printf '%s' "$attr_name" | xxd -p | tr -d '\n')
     
-    if [[ "$hex" =~ ${attr_hex}31[0-9a-f]{2}02([0-9a-f]{2})([0-9a-f]+) ]]; then
-        local int_len_hex="${BASH_REMATCH[1]}"
-        local int_len=$((16#$int_len_hex))
-        local remaining="${BASH_REMATCH[2]}"
+    # Format: attrName + 31 + (84 00 00 00 XX | XX) + 04 + YY + GeneralizedTime
+    # GeneralizedTime format: "20250729113919.0Z" (17 chars)
+    if [[ "$hex" =~ ${attr_hex}(31[0-9a-f]{2}|3184[0-9a-f]{8})04([0-9a-f]{2})([0-9a-f]+) ]]; then
+        local str_len_hex="${BASH_REMATCH[2]}"
+        local str_len=$((16#$str_len_hex))
+        local remaining="${BASH_REMATCH[3]}"
         
-        if [ $int_len -eq 8 ]; then
-            local b0="${remaining:0:2}"
-            local b1="${remaining:2:2}"
-            local b2="${remaining:4:2}"
-            local b3="${remaining:6:2}"
-            local b4="${remaining:8:2}"
-            local b5="${remaining:10:2}"
-            local b6="${remaining:12:2}"
-            local b7="${remaining:14:2}"
+        if [ $str_len -ge 15 ] && [ $str_len -le 20 ]; then
+            # Extract GeneralizedTime string (e.g., "20250729113919.0Z")
+            local time_hex="${remaining:0:$((str_len * 2))}"
+            local time_str=$(echo -n "$time_hex" | xxd -r -p 2>/dev/null)
             
-            local filetime_hex="${b7}${b6}${b5}${b4}${b3}${b2}${b1}${b0}"
-            
-            local filetime=$((16#$filetime_hex))
-            
-            if [ $filetime -eq 0 ]; then
-                echo "-1"
-            else
-                local unix_ts=$(( (filetime / 10000000) - 11644473600 ))
-                echo "$unix_ts"
+            # Parse: YYYYMMDDHHmmss.?Z
+            if [[ "$time_str" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
+                local year="${BASH_REMATCH[1]}"
+                local month="${BASH_REMATCH[2]}"
+                local day="${BASH_REMATCH[3]}"
+                local hour="${BASH_REMATCH[4]}"
+                local minute="${BASH_REMATCH[5]}"
+                local second="${BASH_REMATCH[6]}"
+                
+                # Convert to Unix timestamp using date command
+                local unix_ts=$(date -d "${year}-${month}-${day} ${hour}:${minute}:${second} UTC" +%s 2>/dev/null)
+                
+                if [ -n "$unix_ts" ] && [ "$unix_ts" -gt 0 ]; then
+                    echo "$unix_ts"
+                    return
+                fi
             fi
-            return
         fi
     fi
     
@@ -429,18 +437,22 @@ extract_filetime_timestamp() {
 extract_uac_flags() {
     local hex="$1"
     
-    local attr_hex="757365724163636f756en74436f6e74726f6c"
+    local attr_hex="757365724163636f756e74436f6e74726f6c"
     
-    if [[ "$hex" =~ ${attr_hex}31[0-9a-f]{2}02([0-9a-f]{2})([0-9a-f]+) ]]; then
-        local int_len_hex="${BASH_REMATCH[1]}"
-        local int_len=$((16#$int_len_hex))
-        local remaining="${BASH_REMATCH[2]}"
+    # Format: attrName + 31 + (84 00 00 00 XX | XX) + 04 + YY + ASCII_value
+    if [[ "$hex" =~ ${attr_hex}(31[0-9a-f]{2}|3184[0-9a-f]{8})04([0-9a-f]{2})([0-9a-f]+) ]]; then
+        local str_len_hex="${BASH_REMATCH[2]}"
+        local str_len=$((16#$str_len_hex))
+        local remaining="${BASH_REMATCH[3]}"
         
-        if [ $int_len -le 4 ]; then
-            local int_hex="${remaining:0:$((int_len * 2))}"
-            local uac=$((16#$int_hex))
-            echo "$uac"
-            return
+        if [ $str_len -le 12 ]; then
+            # Extract ASCII string and convert to integer
+            local ascii_hex="${remaining:0:$((str_len * 2))}"
+            local ascii_val=$(echo -n "$ascii_hex" | xxd -r -p 2>/dev/null)
+            if [[ "$ascii_val" =~ ^[0-9]+$ ]]; then
+                echo "$ascii_val"
+                return
+            fi
         fi
     fi
     
