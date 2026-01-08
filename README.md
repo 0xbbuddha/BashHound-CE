@@ -49,6 +49,7 @@ Collection Methods:
 --port          PORT LDAP port (default: 389 for LDAP, 636 for LDAPS)
 --ldaps         Use LDAPS (TLS) - equivalent to --port 636
 --no-tls        Force LDAP without TLS even on port 636
+```
 
 ---
 
