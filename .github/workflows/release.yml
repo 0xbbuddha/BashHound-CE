@@ -1,9 +1,7 @@
-name: Auto Release
+name: Manual Release
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
   release:
@@ -42,7 +40,7 @@ jobs:
           tag_name: ${{ steps.release_info.outputs.tag }}
           name: ${{ steps.release_info.outputs.title }}
           body: |
-            Automatic release from commit ${{ github.sha }}
+            Manual release from commit ${{ github.sha }}
             
             **Changements** : ${{ github.event.head_commit.message }}
           files: |

@@ -3,3 +3,4 @@ output.txt/
 bloodhound_*.json
 *.log
 /tmp/
+roadmap/
