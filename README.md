@@ -69,6 +69,8 @@ Collection Methods:
 
 ---
 
+by 0xbbuddha
+
 <div align="center">
   <sub>Made with Bash</sub>
 </div>
