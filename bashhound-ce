@@ -41,11 +41,11 @@ Usage: $0 [options]
 
 Options obligatoires:
     -d, --domain DOMAIN          Domaine Active Directory (ex: domain.local)
+
+Options facultatives:
     -u, --user USERNAME          Nom d'utilisateur
     -p, --password PASSWORD      Mot de passe
     -s, --server SERVER          Serveur LDAP / Domain Controller
-
-Options facultatives:
     -o, --output FILE            Fichier de sortie (défaut: bloodhound_TIMESTAMP.json)
     -c, --collection METHOD      Méthode de collection (défaut: All)
                                  Valeurs: All, DCOnly, Session, LoggedOn, Trusts, ACL, Group
@@ -55,17 +55,6 @@ Options facultatives:
     --no-tls                     Force LDAP sans TLS même sur port 636
     -v, --verbose                Mode verbeux (affiche tous les messages)
     -h, --help                   Affiche cette aide
-
-Exemples:
-    # LDAP standard (port 389)
-    $0 -d domain.local -u administrator -p Password123 -s dc01.domain.local
-    
-    # LDAPS avec TLS (port 636)
-    $0 -d domain.local -u administrator -p Password123 -s dc01.domain.local --ldaps
-    $0 -d corp.local -u admin -p Pass123! -s 192.168.1.10 --port 636
-    
-    # Avec options avancées
-    $0 -d corp.local -u user@corp.local -p Pass123! -s 192.168.1.10 --ldaps -o data.json
 
 Collection Methods:
     All       - Collecte toutes les données (par défaut)
@@ -139,9 +128,11 @@ parse_arguments() {
         esac
     done
     
-    if [ -z "$DOMAIN" ] || [ -z "$USERNAME" ] || [ -z "$PASSWORD" ] || [ -z "$LDAP_SERVER" ]; then
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Tous les paramètres obligatoires doivent être fournis" >&2
-        show_usage
+    if [ -z "$DOMAIN" ]; then
+        echo "" >&2
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Le paramètre -d (domain) est obligatoire" >&2
+        echo "" >&2
+        echo "Pour plus d'informations, utilisez '--help'." >&2
         exit 1
     fi
     
