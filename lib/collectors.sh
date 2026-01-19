@@ -656,7 +656,7 @@ collect_cert_templates() {
     local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
     local templates_dn="CN=Certificate Templates,$pki_dn"
     
-    local attributes="distinguishedName,name,displayName,msPKI-Certificate-Name-Flag,msPKI-Enrollment-Flag,msPKI-Private-Key-Flag,pKIExtendedKeyUsage,msPKI-Certificate-Application-Policy,msPKI-RA-Signature,msPKI-Template-Schema-Version,pKIExpirationPeriod,pKIOverlapPeriod,msPKI-Minimal-Key-Size,nTSecurityDescriptor"
+    local attributes="distinguishedName,name,displayName,msPKI-Certificate-Name-Flag,msPKI-Enrollment-Flag,msPKI-Private-Key-Flag,pKIExtendedKeyUsage,msPKI-Certificate-Application-Policy,msPKI-RA-Signature,msPKI-Template-Schema-Version,pKIExpirationPeriod,pKIOverlapPeriod,msPKI-Minimal-Key-Size,whenCreated,nTSecurityDescriptor"
     
     local results=$(ldap_search "$templates_dn" 1 "(objectClass=pKICertificateTemplate)" "$attributes")
     
@@ -681,9 +681,11 @@ collect_cert_templates() {
             local ra_signature=$(extract_attribute_value "$line" "msPKI-RA-Signature")
             local schema_version=$(extract_attribute_value "$line" "msPKI-Template-Schema-Version")
             local min_key_size=$(extract_attribute_value "$line" "msPKI-Minimal-Key-Size")
+            local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
+            [ -z "$when_created" ] && when_created="-1"
             
             if [ -n "$dn" ] && [ -n "$name" ]; then
-                echo "$dn|$name|$display_name|$cert_name_flag|$enrollment_flag|$private_key_flag|$eku|$app_policy|$ra_signature|$schema_version|$min_key_size" >> "$COLLECTED_CERTTEMPLATES"
+                echo "$dn|$name|$display_name|$cert_name_flag|$enrollment_flag|$private_key_flag|$eku|$app_policy|$ra_signature|$schema_version|$min_key_size|$when_created" >> "$COLLECTED_CERTTEMPLATES"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -726,7 +728,7 @@ collect_enterprise_cas() {
     local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
     local enrollment_dn="CN=Enrollment Services,$pki_dn"
     
-    local attributes="distinguishedName,name,displayName,dNSHostName,certificateTemplates,cACertificate,nTSecurityDescriptor"
+    local attributes="distinguishedName,name,displayName,dNSHostName,certificateTemplates,cACertificate,whenCreated,nTSecurityDescriptor"
     
     local results=$(ldap_search "$enrollment_dn" 1 "(objectClass=pKIEnrollmentService)" "$attributes")
     
@@ -745,9 +747,11 @@ collect_enterprise_cas() {
             local display_name=$(extract_attribute_value "$line" "displayName")
             local dns_hostname=$(extract_attribute_value "$line" "dNSHostName")
             local cert_templates=$(extract_multivalued_attribute "$line" "certificateTemplates")
+            local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
+            [ -z "$when_created" ] && when_created="-1"
             
             if [ -n "$dn" ] && [ -n "$name" ]; then
-                echo "$dn|$name|$display_name|$dns_hostname|$cert_templates" >> "$COLLECTED_ENTERPRISECAS"
+                echo "$dn|$name|$display_name|$dns_hostname|$cert_templates|$when_created" >> "$COLLECTED_ENTERPRISECAS"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -782,7 +786,7 @@ collect_ntauthstores() {
     local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
     local ntauth_dn="CN=NTAuthCertificates,$pki_dn"
     
-    local attributes="distinguishedName,name,cACertificate,nTSecurityDescriptor"
+    local attributes="distinguishedName,name,cACertificate,whenCreated,nTSecurityDescriptor"
     
     # NTAuthStore is a single object, not a search
     local results=$(ldap_search "$ntauth_dn" 0 "(objectClass=*)" "$attributes")
@@ -799,12 +803,14 @@ collect_ntauthstores() {
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
             local dn=$(extract_dn_from_response "$line")
             local name=$(extract_attribute_value "$line" "name")
+            local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
+            [ -z "$when_created" ] && when_created="-1"
             
             # Extract SHA1 thumbprints from certificates
             local cert_thumbprints=$(extract_cert_thumbprints "$line")
             
             if [ -n "$dn" ]; then
-                echo "$dn|$name|$cert_thumbprints" >> "$COLLECTED_NTAUTHSTORES"
+                echo "$dn|$name|$cert_thumbprints|$when_created" >> "$COLLECTED_NTAUTHSTORES"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -839,7 +845,7 @@ collect_aiacas() {
     local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
     local aia_dn="CN=AIA,$pki_dn"
     
-    local attributes="distinguishedName,name,cACertificate,crossCertificatePair,nTSecurityDescriptor"
+    local attributes="distinguishedName,name,cACertificate,crossCertificatePair,whenCreated,nTSecurityDescriptor"
     
     local results=$(ldap_search "$aia_dn" 1 "(objectClass=certificationAuthority)" "$attributes")
     
@@ -855,6 +861,8 @@ collect_aiacas() {
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
             local dn=$(extract_dn_from_response "$line")
             local name=$(extract_attribute_value "$line" "name")
+            local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
+            [ -z "$when_created" ] && when_created="-1"
             
             # Extract SHA1 thumbprints from certificates
             local cert_thumbprints=$(extract_cert_thumbprints "$line")
@@ -864,7 +872,7 @@ collect_aiacas() {
             fi
             
             if [ -n "$dn" ] && [ -n "$name" ]; then
-                echo "$dn|$name|$cert_thumbprints|$has_cross_cert" >> "$COLLECTED_AIACAS"
+                echo "$dn|$name|$cert_thumbprints|$has_cross_cert|$when_created" >> "$COLLECTED_AIACAS"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -899,7 +907,7 @@ collect_rootcas() {
     local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
     local rootca_dn="CN=Certification Authorities,$pki_dn"
     
-    local attributes="distinguishedName,name,cACertificate,nTSecurityDescriptor"
+    local attributes="distinguishedName,name,cACertificate,whenCreated,nTSecurityDescriptor"
     
     local results=$(ldap_search "$rootca_dn" 1 "(objectClass=certificationAuthority)" "$attributes")
     
@@ -915,12 +923,14 @@ collect_rootcas() {
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
             local dn=$(extract_dn_from_response "$line")
             local name=$(extract_attribute_value "$line" "name")
+            local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
+            [ -z "$when_created" ] && when_created="-1"
             
             # Extract SHA1 thumbprints from certificates
             local cert_thumbprints=$(extract_cert_thumbprints "$line")
             
             if [ -n "$dn" ] && [ -n "$name" ]; then
-                echo "$dn|$name|$cert_thumbprints" >> "$COLLECTED_ROOTCAS"
+                echo "$dn|$name|$cert_thumbprints|$when_created" >> "$COLLECTED_ROOTCAS"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -955,7 +965,7 @@ collect_issuancepolicies() {
     local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
     local oid_dn="CN=OID,$pki_dn"
     
-    local attributes="distinguishedName,name,displayName,msPKI-Cert-Template-OID,nTSecurityDescriptor"
+    local attributes="distinguishedName,name,displayName,msPKI-Cert-Template-OID,whenCreated,nTSecurityDescriptor"
     
     local results=$(ldap_search "$oid_dn" 1 "(objectClass=msPKI-Enterprise-Oid)" "$attributes")
     
@@ -973,9 +983,11 @@ collect_issuancepolicies() {
             local name=$(extract_attribute_value "$line" "name")
             local display_name=$(extract_attribute_value "$line" "displayName")
             local cert_template_oid=$(extract_attribute_value "$line" "msPKI-Cert-Template-OID")
+            local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
+            [ -z "$when_created" ] && when_created="-1"
             
             if [ -n "$dn" ]; then
-                echo "$dn|$name|$display_name|$cert_template_oid" >> "$COLLECTED_ISSUANCEPOLICIES"
+                echo "$dn|$name|$display_name|$cert_template_oid|$when_created" >> "$COLLECTED_ISSUANCEPOLICIES"
                 
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')

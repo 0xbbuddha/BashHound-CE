@@ -1371,8 +1371,9 @@ EOF
         local certtemplates_data=()
         local certtemplate_count=0
         
-        while IFS='|' read -r dn name display_name cert_name_flag enrollment_flag private_key_flag eku app_policy ra_signature schema_version min_key_size; do
+        while IFS='|' read -r dn name display_name cert_name_flag enrollment_flag private_key_flag eku app_policy ra_signature schema_version min_key_size when_created; do
             if [ -n "$dn" ] && [ -n "$name" ]; then
+                [ -z "$when_created" ] && when_created="-1"
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -1444,7 +1445,7 @@ EOF
     "domainsid": "$domain_sid",
     "isaclprotected": false,
     "description": null,
-    "whencreated": -1,
+    "whencreated": $when_created,
     "certificatenameflag": $cert_name_flag,
     "enrollmentflag": $enrollment_flag,
     "privatekeyflag": $private_key_flag,
@@ -1500,8 +1501,9 @@ EOF
         local enterprisecas_data=()
         local enterpriseca_count=0
         
-        while IFS='|' read -r dn name display_name dns_hostname cert_templates; do
+        while IFS='|' read -r dn name display_name dns_hostname cert_templates when_created; do
             if [ -n "$dn" ] && [ -n "$name" ]; then
+                [ -z "$when_created" ] && when_created="-1"
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -1550,7 +1552,7 @@ EOF
     "domainsid": "$domain_sid",
     "isaclprotected": false,
     "description": null,
-    "whencreated": -1,
+    "whencreated": $when_created,
     "flags": "",
     "caname": "$(echo "$name" | tr '[:lower:]' '[:upper:]')",
     "dnshostname": $dns_hostname_json,
@@ -1626,8 +1628,9 @@ EOF
         local ntauthstores_data=()
         local ntauthstore_count=0
         
-        while IFS='|' read -r dn name cert_thumbprints; do
+        while IFS='|' read -r dn name cert_thumbprints when_created; do
             if [ -n "$dn" ]; then
+                [ -z "$when_created" ] && when_created="-1"
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -1663,7 +1666,7 @@ EOF
     "isaclprotected": false,
     "certthumbprints": $cert_thumbprints_json,
     "description": null,
-    "whencreated": -1
+    "whencreated": $when_created
   },
   "DomainSID": "$domain_sid",
   "Aces": $aces_json,
@@ -1703,8 +1706,9 @@ EOF
         local aiacas_data=()
         local aiaca_count=0
         
-        while IFS='|' read -r dn name cert_thumbprints has_cross_cert; do
+        while IFS='|' read -r dn name cert_thumbprints has_cross_cert when_created; do
             if [ -n "$dn" ] && [ -n "$name" ]; then
+                [ -z "$when_created" ] && when_created="-1"
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -1748,7 +1752,7 @@ EOF
     "domainsid": "$domain_sid",
     "isaclprotected": false,
     "description": null,
-    "whencreated": -1,
+    "whencreated": $when_created,
     "crosscertificatepair": $cross_cert_pair_json,
     "hascrosscertificatepair": $has_cross_cert_pair,
     "certthumbprint": "$cert_thumbprint",
@@ -1795,8 +1799,9 @@ EOF
         local rootcas_data=()
         local rootca_count=0
         
-        while IFS='|' read -r dn name cert_thumbprints; do
+        while IFS='|' read -r dn name cert_thumbprints when_created; do
             if [ -n "$dn" ] && [ -n "$name" ]; then
+                [ -z "$when_created" ] && when_created="-1"
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
                 local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
@@ -1837,7 +1842,7 @@ EOF
     "domainsid": "$domain_sid",
     "isaclprotected": false,
     "description": null,
-    "whencreated": -1,
+    "whencreated": $when_created,
     "certthumbprint": "$cert_thumbprint",
     "certname": "$cert_name",
     "certchain": $cert_chain_json,
@@ -1882,8 +1887,10 @@ EOF
         local issuancepolicies_data=()
         local issuancepolicy_count=0
         
-        while IFS='|' read -r dn name display_name cert_template_oid; do
+        while IFS='|' read -r dn name display_name cert_template_oid when_created; do
             if [ -n "$dn" ]; then
+                [ -z "$when_created" ] && when_created="-1"
+                
                 # Filter out system issuance policies (CN < 100)
                 # Extract CN number from DN (e.g., CN=400.xxx -> 400)
                 local cn_number=$(echo "$dn" | grep -oP 'CN=\K[0-9]+' | head -1)
@@ -1926,7 +1933,7 @@ EOF
     "domainsid": "$domain_sid",
     "isaclprotected": false,
     "description": null,
-    "whencreated": -1,
+    "whencreated": $when_created,
     "displayname": $display_name_json,
     "certtemplateoid": $cert_template_oid_json
   },
