@@ -585,6 +585,188 @@ GROUPEOF
             fi
         done < "$groups_file"
         
+        # Add well-known SID synthetic groups for ACL resolution
+        # These groups don't exist as LDAP objects but appear frequently in ACLs
+        local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+        local domain_sid_value=$(grep -m1 "|" "$groups_file" 2>/dev/null | cut -d'|' -f3 | sed 's/-[0-9]*$//')
+        
+        if [ -n "$domain_sid_value" ]; then
+            # S-1-1-0: EVERYONE
+            groups_data+=("$(cat <<WKGEOF
+{
+  "ObjectIdentifier": "${domain_upper}-S-1-1-0",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "ContainedBy": null,
+  "Properties": {
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid_value",
+    "highvalue": false,
+    "name": "EVERYONE@${domain_upper}",
+    "distinguishedname": "",
+    "admincount": false,
+    "description": null,
+    "whencreated": -1,
+    "samaccountname": "Everyone",
+    "isaclprotected": false
+  },
+  "Members": [],
+  "Aces": []
+}
+WKGEOF
+)")
+            ((group_count++))
+            
+            # S-1-5-4: INTERACTIVE
+            groups_data+=("$(cat <<WKGEOF
+{
+  "ObjectIdentifier": "${domain_upper}-S-1-5-4",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "ContainedBy": null,
+  "Properties": {
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid_value",
+    "highvalue": false,
+    "name": "INTERACTIVE@${domain_upper}",
+    "distinguishedname": "",
+    "admincount": false,
+    "description": null,
+    "whencreated": -1,
+    "samaccountname": "INTERACTIVE",
+    "isaclprotected": false
+  },
+  "Members": [],
+  "Aces": []
+}
+WKGEOF
+)")
+            ((group_count++))
+            
+            # S-1-5-9: ENTERPRISE DOMAIN CONTROLLERS
+            groups_data+=("$(cat <<WKGEOF
+{
+  "ObjectIdentifier": "${domain_upper}-S-1-5-9",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "ContainedBy": null,
+  "Properties": {
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid_value",
+    "highvalue": true,
+    "name": "ENTERPRISE DOMAIN CONTROLLERS@${domain_upper}",
+    "distinguishedname": "",
+    "admincount": false,
+    "description": null,
+    "whencreated": -1,
+    "samaccountname": "ENTERPRISE DOMAIN CONTROLLERS",
+    "isaclprotected": false
+  },
+  "Members": [],
+  "Aces": []
+}
+WKGEOF
+)")
+            ((group_count++))
+            
+            # S-1-5-11: AUTHENTICATED USERS
+            groups_data+=("$(cat <<WKGEOF
+{
+  "ObjectIdentifier": "${domain_upper}-S-1-5-11",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "ContainedBy": null,
+  "Properties": {
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid_value",
+    "highvalue": false,
+    "name": "AUTHENTICATED USERS@${domain_upper}",
+    "distinguishedname": "",
+    "admincount": false,
+    "description": null,
+    "whencreated": -1,
+    "samaccountname": "Authenticated Users",
+    "isaclprotected": false
+  },
+  "Members": [],
+  "Aces": []
+}
+WKGEOF
+)")
+            ((group_count++))
+            
+            # S-1-5-15: THIS ORGANIZATION
+            groups_data+=("$(cat <<WKGEOF
+{
+  "ObjectIdentifier": "${domain_upper}-S-1-5-15",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "ContainedBy": null,
+  "Properties": {
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid_value",
+    "highvalue": false,
+    "name": "THIS ORGANIZATION@${domain_upper}",
+    "distinguishedname": "",
+    "admincount": false,
+    "description": null,
+    "whencreated": -1,
+    "samaccountname": "This Organization",
+    "isaclprotected": false
+  },
+  "Members": [],
+  "Aces": []
+}
+WKGEOF
+)")
+            ((group_count++))
+            
+            # Add synthetic duplicates for certain BUILTIN groups (without DN)
+            # RustHound creates these for ACL resolution when the SID appears without full LDAP object
+            # We only add the most commonly referenced BUILTIN groups in ACLs
+            local builtin_groups=(
+                "S-1-5-32-544|ADMINISTRATORS|Administrators"
+                "S-1-5-32-548|ACCOUNT OPERATORS|Account Operators"
+                "S-1-5-32-550|PRINT OPERATORS|Print Operators"
+                "S-1-5-32-554|PRE-WINDOWS 2000 COMPATIBLE ACCESS|Pre-Windows 2000 Compatible Access"
+                "S-1-5-32-557|INCOMING FOREST TRUST BUILDERS|Incoming Forest Trust Builders"
+                "S-1-5-32-560|WINDOWS AUTHORIZATION ACCESS GROUP|Windows Authorization Access Group"
+                "S-1-5-32-561|TERMINAL SERVER LICENSE SERVERS|Terminal Server License Servers"
+            )
+            
+            for builtin in "${builtin_groups[@]}"; do
+                IFS='|' read -r builtin_sid builtin_name builtin_sam <<< "$builtin"
+                local is_highvalue="false"
+                [[ "$builtin_sid" == "S-1-5-32-544" ]] && is_highvalue="true"  # Administrators
+                [[ "$builtin_sid" == "S-1-5-32-548" ]] && is_highvalue="true"  # Account Operators
+                
+                groups_data+=("$(cat <<WKGEOF
+{
+  "ObjectIdentifier": "${domain_upper}-${builtin_sid}",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "ContainedBy": null,
+  "Properties": {
+    "domain": "$domain_upper",
+    "domainsid": "$domain_sid_value",
+    "highvalue": $is_highvalue,
+    "name": "${builtin_name}@${domain_upper}",
+    "distinguishedname": "",
+    "admincount": false,
+    "description": null,
+    "whencreated": -1,
+    "samaccountname": "$builtin_sam",
+    "isaclprotected": false
+  },
+  "Members": [],
+  "Aces": []
+}
+WKGEOF
+)")
+                ((group_count++))
+            done
+        fi
+        
         if [ $group_count -gt 0 ]; then
             local groups_json
             local IFS=','
