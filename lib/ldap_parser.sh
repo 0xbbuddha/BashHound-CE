@@ -753,3 +753,87 @@ extract_multivalued_attribute() {
     echo ""
 }
 
+################################################################################
+# extract_cert_thumbprints - Extract SHA1 thumbprints from cACertificate attribute
+#
+# Certificates are stored as DER-encoded binary in the cACertificate attribute
+# This function:
+# 1. Extracts the certificate data from LDAP response
+# 2. Decodes hex to binary
+# 3. Calculates SHA1 thumbprint
+# 4. Returns comma-separated thumbprints (uppercase hex)
+#
+# Args:
+#   $1: LDAP hex response containing cACertificate attribute
+#
+# Returns:
+#   Comma-separated SHA1 thumbprints (e.g., "20A9E9...,...") or empty string
+################################################################################
+extract_cert_thumbprints() {
+    local ldap_response="$1"
+    
+    # Search for cACertificate attribute in the response
+    # Attribute name "cACertificate" in hex
+    if [[ ! "$ldap_response" =~ 63414365727469666963617465 ]]; then
+        echo ""
+        return 0
+    fi
+    
+    local thumbprints=()
+    local temp_file="/tmp/cert_extract_$$"
+    
+    # Extract all OCTET STRING values that contain DER certificates
+    # DER certificates start with 30 82 or 30 84 (SEQUENCE with length)
+    # Pattern in LDAP: 04 [length] 30 82... (OCTET STRING containing certificate)
+    
+    # Find position after cACertificate attribute name
+    local cert_section="${ldap_response#*63414365727469666963617465}"
+    
+    # Look for OCTET STRINGs containing certificates
+    # Format: 04 82 [2-byte length] [certificate data]
+    #     or: 04 84 [4-byte length] [certificate data]
+    
+    while [[ "$cert_section" =~ 048([24])([0-9a-f]+) ]]; do
+        local len_indicator="${BASH_REMATCH[1]}"
+        local remaining="${BASH_REMATCH[2]}"
+        
+        local num_len_bytes=$((16#$len_indicator))
+        local len_hex="${remaining:0:$((num_len_bytes*2))}"
+        local cert_start=$((num_len_bytes*2))
+        
+        # Parse length (big-endian)
+        local len=0
+        for ((i=0; i<num_len_bytes; i++)); do
+            local byte_hex="${len_hex:$((i*2)):2}"
+            len=$(( (len << 8) + 16#$byte_hex ))
+        done
+        
+        # Extract certificate hex data
+        local cert_hex="${remaining:$cert_start:$((len*2))}"
+        
+        # Verify it looks like a certificate (starts with 30 82 or 30 84)
+        if [[ "$cert_hex" =~ ^308[24] ]]; then
+            # Convert hex to binary and calculate SHA1
+            echo -n "$cert_hex" | xxd -r -p > "$temp_file" 2>/dev/null
+            
+            if [ -s "$temp_file" ]; then
+                local thumbprint=$(sha1sum "$temp_file" 2>/dev/null | awk '{print toupper($1)}')
+                if [ -n "$thumbprint" ]; then
+                    thumbprints+=("$thumbprint")
+                fi
+            fi
+        fi
+        
+        # Move past this certificate to find next one
+        cert_section="${cert_section#*048${len_indicator}${len_hex}}"
+    done
+    
+    rm -f "$temp_file"
+    
+    # Return comma-separated thumbprints
+    if [ ${#thumbprints[@]} -gt 0 ]; then
+        IFS=','; echo "${thumbprints[*]}"
+    else
+        echo ""
+    fi
+}

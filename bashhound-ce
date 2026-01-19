@@ -309,6 +309,10 @@ main() {
                 collect_trusts 2>&1 || true
                 collect_cert_templates 2>&1 || true
                 collect_enterprise_cas 2>&1 || true
+                collect_ntauthstores 2>&1 || true
+                collect_aiacas 2>&1 || true
+                collect_rootcas 2>&1 || true
+                collect_issuancepolicies 2>&1 || true
             else
                 collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
                 collect_domain_info >/dev/null 2>&1 || true
@@ -321,6 +325,10 @@ main() {
                 collect_trusts >/dev/null 2>&1 || true
                 collect_cert_templates >/dev/null 2>&1 || true
                 collect_enterprise_cas >/dev/null 2>&1 || true
+                collect_ntauthstores >/dev/null 2>&1 || true
+                collect_aiacas >/dev/null 2>&1 || true
+                collect_rootcas >/dev/null 2>&1 || true
+                collect_issuancepolicies >/dev/null 2>&1 || true
             fi
             ;;
         # DCOnly: Same as All but designed for DC-only enumeration
@@ -338,6 +346,10 @@ main() {
                 collect_trusts 2>&1 || true
                 collect_cert_templates 2>&1 || true
                 collect_enterprise_cas 2>&1 || true
+                collect_ntauthstores 2>&1 || true
+                collect_aiacas 2>&1 || true
+                collect_rootcas 2>&1 || true
+                collect_issuancepolicies 2>&1 || true
             else
                 collector_init_domain "$DOMAIN" >/dev/null 2>&1 || true
                 collect_domain_info >/dev/null 2>&1 || true
@@ -350,6 +362,10 @@ main() {
                 collect_trusts >/dev/null 2>&1 || true
                 collect_cert_templates >/dev/null 2>&1 || true
                 collect_enterprise_cas >/dev/null 2>&1 || true
+                collect_ntauthstores >/dev/null 2>&1 || true
+                collect_aiacas >/dev/null 2>&1 || true
+                collect_rootcas >/dev/null 2>&1 || true
+                collect_issuancepolicies >/dev/null 2>&1 || true
             fi
             ;;
         # Trusts: Collect only domain trust relationships
@@ -407,6 +423,10 @@ main() {
     
     local certtemplates_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_certtemplates_' | head -1)
     local enterprisecas_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_enterprisecas_' | head -1)
+    local ntauthstores_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_ntauthstores_' | head -1)
+    local aiacas_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_aiacas_' | head -1)
+    local rootcas_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_rootcas_' | head -1)
+    local issuancepolicies_file=$(printf '%s\n' "${created_files[@]}" | grep 'bloodhound_issuancepolicies_' | head -1)
     
     local users_count=$([ -f "$users_file" ] && jq '.meta.count' "$users_file" 2>/dev/null || echo 0)
     local groups_count=$([ -f "$groups_file" ] && jq '.meta.count' "$groups_file" 2>/dev/null || echo 0)
@@ -417,6 +437,10 @@ main() {
     local containers_count=$([ -f "$containers_file" ] && jq '.meta.count' "$containers_file" 2>/dev/null || echo 0)
     local certtemplates_count=$([ -f "$certtemplates_file" ] && jq '.meta.count' "$certtemplates_file" 2>/dev/null || echo 0)
     local enterprisecas_count=$([ -f "$enterprisecas_file" ] && jq '.meta.count' "$enterprisecas_file" 2>/dev/null || echo 0)
+    local ntauthstores_count=$([ -f "$ntauthstores_file" ] && jq '.meta.count' "$ntauthstores_file" 2>/dev/null || echo 0)
+    local aiacas_count=$([ -f "$aiacas_file" ] && jq '.meta.count' "$aiacas_file" 2>/dev/null || echo 0)
+    local rootcas_count=$([ -f "$rootcas_file" ] && jq '.meta.count' "$rootcas_file" 2>/dev/null || echo 0)
+    local issuancepolicies_count=$([ -f "$issuancepolicies_file" ] && jq '.meta.count' "$issuancepolicies_file" 2>/dev/null || echo 0)
     
     log_info "export" "Parsing LDAP objects finished!"
     
@@ -438,8 +462,12 @@ main() {
                 log_info "export" "$domains_count domains parsed!"
                 log_info "export" "$gpos_count gpos parsed!"
                 log_info "export" "$containers_count containers parsed!"
-                [ "$certtemplates_count" -gt 0 ] && log_info "export" "$certtemplates_count certtemplates parsed!"
+                [ "$ntauthstores_count" -gt 0 ] && log_info "export" "$ntauthstores_count ntauthstores parsed!"
+                [ "$aiacas_count" -gt 0 ] && log_info "export" "$aiacas_count aiacas parsed!"
+                [ "$rootcas_count" -gt 0 ] && log_info "export" "$rootcas_count rootcas parsed!"
                 [ "$enterprisecas_count" -gt 0 ] && log_info "export" "$enterprisecas_count enterprisecas parsed!"
+                [ "$certtemplates_count" -gt 0 ] && log_info "export" "$certtemplates_count certtemplates parsed!"
+                [ "$issuancepolicies_count" -gt 0 ] && log_info "export" "$issuancepolicies_count issuancepolicies parsed!"
                 
                 # Count trusts only from the newly created domain file
                 if [ -f "$domains_file" ]; then
@@ -452,14 +480,17 @@ main() {
                 log_info "export" "$zip_filename created!"
                 echo ""
                 local bashhound_color='\033[38;2;0;229;142m'
+                local ce_color='\033[38;2;255;165;0m'
                 local reset='\033[0m'
-                echo -e "${bashhound_color}BashHound-CE${reset} Enumeration Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
+                echo -e "${bashhound_color}BashHound${reset}-${ce_color}CE${reset} Collection Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
                 
                 # Cleanup temporary collection files
                 rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
                       "/tmp/bashhound_domains_$$" "/tmp/bashhound_gpos_$$" "/tmp/bashhound_ous_$$" \
                       "/tmp/bashhound_containers_$$" "/tmp/bashhound_trusts_$$" "/tmp/bashhound_aces_$$" \
-                      "/tmp/bashhound_certtemplates_$$" "/tmp/bashhound_enterprisecas_$$" 2>/dev/null
+                      "/tmp/bashhound_certtemplates_$$" "/tmp/bashhound_enterprisecas_$$" \
+                      "/tmp/bashhound_ntauthstores_$$" "/tmp/bashhound_aiacas_$$" \
+                      "/tmp/bashhound_rootcas_$$" "/tmp/bashhound_issuancepolicies_$$" 2>/dev/null
                 
                 if [ "$ZIP_ONLY" = "true" ]; then
                     rm -f "${created_files[@]}"

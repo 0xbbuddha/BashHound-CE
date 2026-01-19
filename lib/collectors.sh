@@ -53,9 +53,13 @@ COLLECTED_TRUSTS="/tmp/bashhound_trusts_$$"
 COLLECTED_ACES="/tmp/bashhound_aces_$$"
 COLLECTED_CERTTEMPLATES="/tmp/bashhound_certtemplates_$$"
 COLLECTED_ENTERPRISECAS="/tmp/bashhound_enterprisecas_$$"
+COLLECTED_NTAUTHSTORES="/tmp/bashhound_ntauthstores_$$"
+COLLECTED_AIACAS="/tmp/bashhound_aiacas_$$"
+COLLECTED_ROOTCAS="/tmp/bashhound_rootcas_$$"
+COLLECTED_ISSUANCEPOLICIES="/tmp/bashhound_issuancepolicies_$$"
 
 # Export variables for export_ce.sh to use (needed for ContainedBy resolution)
-export COLLECTED_OUS COLLECTED_CONTAINERS COLLECTED_CERTTEMPLATES COLLECTED_ENTERPRISECAS
+export COLLECTED_OUS COLLECTED_CONTAINERS COLLECTED_CERTTEMPLATES COLLECTED_ENTERPRISECAS COLLECTED_NTAUTHSTORES COLLECTED_AIACAS COLLECTED_ROOTCAS COLLECTED_ISSUANCEPOLICIES
 
 # Cleanup temporary files on script exit
 # Note: Cleanup is now handled by the main script after export to avoid
@@ -763,4 +767,232 @@ collect_enterprise_cas() {
     done <<< "$results"
     
     echo "INFO: $count Enterprise CAs collectées" >&2
+}
+
+################################################################################
+# collect_ntauthstores - Collect NTAuth Store objects
+#
+# NTAuthStore contains trusted root certificates for client authentication
+# DN: CN=NTAuthCertificates,CN=Public Key Services,CN=Services,CN=Configuration,DC=...
+################################################################################
+collect_ntauthstores() {
+    echo "INFO: Collecte des NTAuth Stores..." >&2
+    
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
+    local ntauth_dn="CN=NTAuthCertificates,$pki_dn"
+    
+    local attributes="distinguishedName,name,cACertificate,nTSecurityDescriptor"
+    
+    # NTAuthStore is a single object, not a search
+    local results=$(ldap_search "$ntauth_dn" 0 "(objectClass=*)" "$attributes")
+    
+    if [ -z "$results" ]; then
+        echo "WARN: NTAuthStore non trouvé (AD CS pas configuré ?)" >&2
+        return 0
+    fi
+    
+    local count=0
+    > "$COLLECTED_NTAUTHSTORES"
+    
+    while IFS= read -r line; do
+        if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+            local dn=$(extract_dn_from_response "$line")
+            local name=$(extract_attribute_value "$line" "name")
+            
+            # Extract SHA1 thumbprints from certificates
+            local cert_thumbprints=$(extract_cert_thumbprints "$line")
+            
+            if [ -n "$dn" ]; then
+                echo "$dn|$name|$cert_thumbprints" >> "$COLLECTED_NTAUTHSTORES"
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local aces=$(extract_aces_from_ldap_response "$line")
+                if [ -n "$aces" ]; then
+                    while IFS='|' read -r principal_sid right_name is_inherited; do
+                        if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                            echo "$object_id|NTAuthStore|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                        fi
+                    done <<< "$aces"
+                fi
+                
+                ((count++))
+            fi
+        fi
+    done <<< "$results"
+    
+    echo "INFO: $count NTAuth Store collecté" >&2
+}
+
+################################################################################
+# collect_aiacas - Collect AIA CA objects (Authority Information Access)
+#
+# AIACAs are located in CN=AIA,CN=Public Key Services,CN=Services,CN=Configuration
+# They contain certificate chain information
+################################################################################
+collect_aiacas() {
+    echo "INFO: Collecte des AIA CAs..." >&2
+    
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
+    local aia_dn="CN=AIA,$pki_dn"
+    
+    local attributes="distinguishedName,name,cACertificate,crossCertificatePair,nTSecurityDescriptor"
+    
+    local results=$(ldap_search "$aia_dn" 1 "(objectClass=certificationAuthority)" "$attributes")
+    
+    if [ -z "$results" ]; then
+        echo "WARN: Aucune AIA CA trouvée (AD CS pas configuré ?)" >&2
+        return 0
+    fi
+    
+    local count=0
+    > "$COLLECTED_AIACAS"
+    
+    while IFS= read -r line; do
+        if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+            local dn=$(extract_dn_from_response "$line")
+            local name=$(extract_attribute_value "$line" "name")
+            
+            # Extract SHA1 thumbprints from certificates
+            local cert_thumbprints=$(extract_cert_thumbprints "$line")
+            local has_cross_cert="false"
+            if [[ "$line" =~ crossCertificatePair ]]; then
+                has_cross_cert="true"
+            fi
+            
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                echo "$dn|$name|$cert_thumbprints|$has_cross_cert" >> "$COLLECTED_AIACAS"
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local aces=$(extract_aces_from_ldap_response "$line")
+                if [ -n "$aces" ]; then
+                    while IFS='|' read -r principal_sid right_name is_inherited; do
+                        if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                            echo "$object_id|AIACA|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                        fi
+                    done <<< "$aces"
+                fi
+                
+                ((count++))
+            fi
+        fi
+    done <<< "$results"
+    
+    echo "INFO: $count AIA CAs collectées" >&2
+}
+
+################################################################################
+# collect_rootcas - Collect Root CA objects
+#
+# RootCAs are located in CN=Certification Authorities,CN=Public Key Services
+# They represent trusted root certification authorities
+################################################################################
+collect_rootcas() {
+    echo "INFO: Collecte des Root CAs..." >&2
+    
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
+    local rootca_dn="CN=Certification Authorities,$pki_dn"
+    
+    local attributes="distinguishedName,name,cACertificate,nTSecurityDescriptor"
+    
+    local results=$(ldap_search "$rootca_dn" 1 "(objectClass=certificationAuthority)" "$attributes")
+    
+    if [ -z "$results" ]; then
+        echo "WARN: Aucune Root CA trouvée (AD CS pas configuré ?)" >&2
+        return 0
+    fi
+    
+    local count=0
+    > "$COLLECTED_ROOTCAS"
+    
+    while IFS= read -r line; do
+        if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+            local dn=$(extract_dn_from_response "$line")
+            local name=$(extract_attribute_value "$line" "name")
+            
+            # Extract SHA1 thumbprints from certificates
+            local cert_thumbprints=$(extract_cert_thumbprints "$line")
+            
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                echo "$dn|$name|$cert_thumbprints" >> "$COLLECTED_ROOTCAS"
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local aces=$(extract_aces_from_ldap_response "$line")
+                if [ -n "$aces" ]; then
+                    while IFS='|' read -r principal_sid right_name is_inherited; do
+                        if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                            echo "$object_id|RootCA|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                        fi
+                    done <<< "$aces"
+                fi
+                
+                ((count++))
+            fi
+        fi
+    done <<< "$results"
+    
+    echo "INFO: $count Root CAs collectées" >&2
+}
+
+################################################################################
+# collect_issuancepolicies - Collect Certificate Issuance Policy objects
+#
+# Issuance Policies are located in CN=OID,CN=Public Key Services
+# They define certificate issuance policies (Low/Medium/High Assurance, etc.)
+################################################################################
+collect_issuancepolicies() {
+    echo "INFO: Collecte des Issuance Policies..." >&2
+    
+    local config_dn="CN=Configuration,$DOMAIN_DN"
+    local pki_dn="CN=Public Key Services,CN=Services,$config_dn"
+    local oid_dn="CN=OID,$pki_dn"
+    
+    local attributes="distinguishedName,name,displayName,msPKI-Cert-Template-OID,nTSecurityDescriptor"
+    
+    local results=$(ldap_search "$oid_dn" 1 "(objectClass=msPKI-Enterprise-Oid)" "$attributes")
+    
+    if [ -z "$results" ]; then
+        echo "WARN: Aucune Issuance Policy trouvée (AD CS pas configuré ?)" >&2
+        return 0
+    fi
+    
+    local count=0
+    > "$COLLECTED_ISSUANCEPOLICIES"
+    
+    while IFS= read -r line; do
+        if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
+            local dn=$(extract_dn_from_response "$line")
+            local name=$(extract_attribute_value "$line" "name")
+            local display_name=$(extract_attribute_value "$line" "displayName")
+            local cert_template_oid=$(extract_attribute_value "$line" "msPKI-Cert-Template-OID")
+            
+            if [ -n "$dn" ]; then
+                echo "$dn|$name|$display_name|$cert_template_oid" >> "$COLLECTED_ISSUANCEPOLICIES"
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local aces=$(extract_aces_from_ldap_response "$line")
+                if [ -n "$aces" ]; then
+                    while IFS='|' read -r principal_sid right_name is_inherited; do
+                        if [ -n "$principal_sid" ] && [ -n "$right_name" ]; then
+                            echo "$object_id|IssuancePolicy|$principal_sid|$right_name|$is_inherited" >> "$COLLECTED_ACES"
+                        fi
+                    done <<< "$aces"
+                fi
+                
+                ((count++))
+            fi
+        fi
+    done <<< "$results"
+    
+    echo "INFO: $count Issuance Policies collectées" >&2
 }

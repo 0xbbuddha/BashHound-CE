@@ -1620,6 +1620,351 @@ EOF
         fi
     fi
     
+    # Export NTAuthStores
+    local ntauthstores_file="/tmp/bashhound_ntauthstores_$$"
+    if [ -f "$ntauthstores_file" ] && [ -s "$ntauthstores_file" ]; then
+        local ntauthstores_data=()
+        local ntauthstore_count=0
+        
+        while IFS='|' read -r dn name cert_thumbprints; do
+            if [ -n "$dn" ]; then
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                # Parse certificate thumbprints from collector
+                local cert_thumbprints_json="[]"
+                if [ -n "$cert_thumbprints" ]; then
+                    local thumbprint_array=()
+                    IFS=',' read -ra thumbprints <<< "$cert_thumbprints"
+                    for thumbprint in "${thumbprints[@]}"; do
+                        if [ -n "$thumbprint" ]; then
+                            thumbprint_array+=("\"$thumbprint\"")
+                        fi
+                    done
+                    if [ ${#thumbprint_array[@]} -gt 0 ]; then
+                        cert_thumbprints_json="[$(IFS=,; echo "${thumbprint_array[*]}")]"
+                    fi
+                fi
+                
+                local aces_json=$(build_aces_json "$object_id")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
+                
+                ntauthstores_data+=("$(cat <<NTAUTHEOF
+{
+  "ObjectIdentifier": "$object_id",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "Properties": {
+    "domain": "$domain_upper",
+    "name": "$(echo "$name@$domain_upper" | tr '[:lower:]' '[:upper:]')",
+    "distinguishedname": "$dn_upper",
+    "domainsid": "$domain_sid",
+    "isaclprotected": false,
+    "certthumbprints": $cert_thumbprints_json,
+    "description": null,
+    "whencreated": -1
+  },
+  "DomainSID": "$domain_sid",
+  "Aces": $aces_json,
+  "ContainedBy": $contained_by
+}
+NTAUTHEOF
+)")
+                ((ntauthstore_count++))
+            fi
+        done < "$ntauthstores_file"
+        
+        if [ ${#ntauthstores_data[@]} -gt 0 ]; then
+            local ntauthstores_file_out="${output_prefix}_ntauthstores_${timestamp}.json"
+            local ntauthstores_json=$(IFS=,; echo "${ntauthstores_data[*]}")
+            cat > "$ntauthstores_file_out" <<EOF
+{
+  "data": [
+    $ntauthstores_json
+  ],
+  "meta": {
+    "methods": 0,
+    "type": "ntauthstores",
+    "count": $ntauthstore_count,
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
+  }
+}
+EOF
+            files_created+=("$ntauthstores_file_out")
+            echo "INFO: Créé $ntauthstores_file_out ($ntauthstore_count NTAuth Stores)" >&2
+        fi
+    fi
+    
+    # Export AIACAs
+    local aiacas_file="/tmp/bashhound_aiacas_$$"
+    if [ -f "$aiacas_file" ] && [ -s "$aiacas_file" ]; then
+        local aiacas_data=()
+        local aiaca_count=0
+        
+        while IFS='|' read -r dn name cert_thumbprints has_cross_cert; do
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                # Parse certificate thumbprints from collector
+                local cert_thumbprint=""
+                local cert_chain_json="[]"
+                if [ -n "$cert_thumbprints" ]; then
+                    # Use first thumbprint as primary
+                    cert_thumbprint=$(echo "$cert_thumbprints" | cut -d',' -f1)
+                    
+                    # Build cert chain array
+                    local thumbprint_array=()
+                    IFS=',' read -ra thumbprints <<< "$cert_thumbprints"
+                    for tp in "${thumbprints[@]}"; do
+                        if [ -n "$tp" ]; then
+                            thumbprint_array+=("\"$tp\"")
+                        fi
+                    done
+                    if [ ${#thumbprint_array[@]} -gt 0 ]; then
+                        cert_chain_json="[$(IFS=,; echo "${thumbprint_array[*]}")]"
+                    fi
+                fi
+                local cert_name="$cert_thumbprint"
+                
+                local cross_cert_pair_json="[]"
+                local has_cross_cert_pair="$has_cross_cert"
+                
+                local aces_json=$(build_aces_json "$object_id")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
+                
+                aiacas_data+=("$(cat <<AIACAEOF
+{
+  "ObjectIdentifier": "$object_id",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "Properties": {
+    "domain": "$domain_upper",
+    "name": "$(echo "$name@$domain_upper" | tr '[:lower:]' '[:upper:]')",
+    "distinguishedname": "$dn_upper",
+    "domainsid": "$domain_sid",
+    "isaclprotected": false,
+    "description": null,
+    "whencreated": -1,
+    "crosscertificatepair": $cross_cert_pair_json,
+    "hascrosscertificatepair": $has_cross_cert_pair,
+    "certthumbprint": "$cert_thumbprint",
+    "certname": "$cert_name",
+    "certchain": $cert_chain_json,
+    "hasbasicconstraints": false,
+    "basicconstraintpathlength": 0
+  },
+  "DomainSID": "$domain_sid",
+  "Aces": $aces_json,
+  "ContainedBy": $contained_by
+}
+AIACAEOF
+)")
+                ((aiaca_count++))
+            fi
+        done < "$aiacas_file"
+        
+        if [ ${#aiacas_data[@]} -gt 0 ]; then
+            local aiacas_file_out="${output_prefix}_aiacas_${timestamp}.json"
+            local aiacas_json=$(IFS=,; echo "${aiacas_data[*]}")
+            cat > "$aiacas_file_out" <<EOF
+{
+  "data": [
+    $aiacas_json
+  ],
+  "meta": {
+    "methods": 0,
+    "type": "aiacas",
+    "count": $aiaca_count,
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
+  }
+}
+EOF
+            files_created+=("$aiacas_file_out")
+            echo "INFO: Créé $aiacas_file_out ($aiaca_count AIA CAs)" >&2
+        fi
+    fi
+    
+    # Export RootCAs
+    local rootcas_file="/tmp/bashhound_rootcas_$$"
+    if [ -f "$rootcas_file" ] && [ -s "$rootcas_file" ]; then
+        local rootcas_data=()
+        local rootca_count=0
+        
+        while IFS='|' read -r dn name cert_thumbprints; do
+            if [ -n "$dn" ] && [ -n "$name" ]; then
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                # Parse certificate thumbprints from collector
+                local cert_thumbprint=""
+                local cert_chain_json="[]"
+                if [ -n "$cert_thumbprints" ]; then
+                    # Use first thumbprint as primary
+                    cert_thumbprint=$(echo "$cert_thumbprints" | cut -d',' -f1)
+                    
+                    # Build cert chain array
+                    local thumbprint_array=()
+                    IFS=',' read -ra thumbprints <<< "$cert_thumbprints"
+                    for tp in "${thumbprints[@]}"; do
+                        if [ -n "$tp" ]; then
+                            thumbprint_array+=("\"$tp\"")
+                        fi
+                    done
+                    if [ ${#thumbprint_array[@]} -gt 0 ]; then
+                        cert_chain_json="[$(IFS=,; echo "${thumbprint_array[*]}")]"
+                    fi
+                fi
+                local cert_name="$cert_thumbprint"
+                
+                local aces_json=$(build_aces_json "$object_id")
+                local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
+                
+                rootcas_data+=("$(cat <<ROOTCAEOF
+{
+  "ObjectIdentifier": "$object_id",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "Properties": {
+    "domain": "$domain_upper",
+    "name": "$(echo "$name@$domain_upper" | tr '[:lower:]' '[:upper:]')",
+    "distinguishedname": "$dn_upper",
+    "domainsid": "$domain_sid",
+    "isaclprotected": false,
+    "description": null,
+    "whencreated": -1,
+    "certthumbprint": "$cert_thumbprint",
+    "certname": "$cert_name",
+    "certchain": $cert_chain_json,
+    "hasbasicconstraints": false,
+    "basicconstraintpathlength": 0
+  },
+  "DomainSID": "$domain_sid",
+  "Aces": $aces_json,
+  "ContainedBy": $contained_by
+}
+ROOTCAEOF
+)")
+                ((rootca_count++))
+            fi
+        done < "$rootcas_file"
+        
+        if [ ${#rootcas_data[@]} -gt 0 ]; then
+            local rootcas_file_out="${output_prefix}_rootcas_${timestamp}.json"
+            local rootcas_json=$(IFS=,; echo "${rootcas_data[*]}")
+            cat > "$rootcas_file_out" <<EOF
+{
+  "data": [
+    $rootcas_json
+  ],
+  "meta": {
+    "methods": 0,
+    "type": "rootcas",
+    "count": $rootca_count,
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
+  }
+}
+EOF
+            files_created+=("$rootcas_file_out")
+            echo "INFO: Créé $rootcas_file_out ($rootca_count Root CAs)" >&2
+        fi
+    fi
+    
+    # Export IssuancePolicies
+    local issuancepolicies_file="/tmp/bashhound_issuancepolicies_$$"
+    if [ -f "$issuancepolicies_file" ] && [ -s "$issuancepolicies_file" ]; then
+        local issuancepolicies_data=()
+        local issuancepolicy_count=0
+        
+        while IFS='|' read -r dn name display_name cert_template_oid; do
+            if [ -n "$dn" ]; then
+                # Filter out system issuance policies (CN < 100)
+                # Extract CN number from DN (e.g., CN=400.xxx -> 400)
+                local cn_number=$(echo "$dn" | grep -oP 'CN=\K[0-9]+' | head -1)
+                if [ -n "$cn_number" ] && [ "$cn_number" -lt 100 ]; then
+                    continue  # Skip system policies
+                fi
+                
+                local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
+                local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
+                local object_id=$(echo -n "$dn_upper" | md5sum | awk '{print toupper($1)}' | sed 's/\(........\)\(....\)\(....\)\(....\)\(............\)/\1-\2-\3-\4-\5/')
+                
+                local display_name_json="null"
+                if [ -n "$display_name" ]; then
+                    display_name="${display_name//\\/\\\\}"
+                    display_name="${display_name//\"/\\\"}"
+                    display_name_json="\"$display_name\""
+                fi
+                
+                local cert_template_oid_json="null"
+                if [ -n "$cert_template_oid" ]; then
+                    cert_template_oid_json="\"$cert_template_oid\""
+                fi
+                
+                local policy_name="$display_name"
+                if [ -z "$policy_name" ]; then
+                    policy_name="$name"
+                fi
+                
+                local aces_json=$(build_aces_json "$object_id")
+                
+                issuancepolicies_data+=("$(cat <<ISSUANCEEOF
+{
+  "ObjectIdentifier": "$object_id",
+  "IsDeleted": false,
+  "IsACLProtected": false,
+  "Properties": {
+    "domain": "$domain_upper",
+    "name": "$(echo "$policy_name@$domain_upper" | tr '[:lower:]' '[:upper:]')",
+    "distinguishedname": "$dn_upper",
+    "domainsid": "$domain_sid",
+    "isaclprotected": false,
+    "description": null,
+    "whencreated": -1,
+    "displayname": $display_name_json,
+    "certtemplateoid": $cert_template_oid_json
+  },
+  "GroupLink": {
+    "ObjectIdentifier": null,
+    "ObjectType": "Base"
+  },
+  "Aces": $aces_json,
+  "ContainedBy": null
+}
+ISSUANCEEOF
+)")
+                ((issuancepolicy_count++))
+            fi
+        done < "$issuancepolicies_file"
+        
+        if [ ${#issuancepolicies_data[@]} -gt 0 ]; then
+            local issuancepolicies_file_out="${output_prefix}_issuancepolicies_${timestamp}.json"
+            local issuancepolicies_json=$(IFS=,; echo "${issuancepolicies_data[*]}")
+            cat > "$issuancepolicies_file_out" <<EOF
+{
+  "data": [
+    $issuancepolicies_json
+  ],
+  "meta": {
+    "methods": 0,
+    "type": "issuancepolicies",
+    "count": $issuancepolicy_count,
+    "version": 6,
+    "collectorversion": "BashHound-CE v1.0"
+  }
+}
+EOF
+            files_created+=("$issuancepolicies_file_out")
+            echo "INFO: Créé $issuancepolicies_file_out ($issuancepolicy_count Issuance Policies)" >&2
+        fi
+    fi
+    
     printf '%s\n' "${files_created[@]}"
 }
 
