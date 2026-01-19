@@ -31,7 +31,7 @@ BashHound was created as a technical challenge rather than for real-world use. A
 
 ### Standart
 ```bash
-bashhound-ce -d <domain.local> -u <user> -p <password> -s <dc.domain.local> 
+bashhound-ce -d <domain.local> -u <user> -p <password> -f <dc.domain.local> 
 ```
 
 ### Options
