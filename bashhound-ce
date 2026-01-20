@@ -39,30 +39,30 @@ BashHound-CE - BloodHound Community Edition collector in pure Bash
 
 Usage: $0 [options]
 
-Options obligatoires:
-    -d, --domain DOMAIN          Domaine Active Directory (ex: domain.local)
+Mandatory options:
+    -d, --domain DOMAIN          Domain Active Directory (example: domain.local)
 
-Options facultatives:
-    -u, --ldapuser USERNAME          Nom d'utilisateur
-    -p, --ldappassword PASSWORD      Mot de passe
-    -f, --ldapfqdn FQDN          Serveur LDAP / Domain Controller
-    -o, --output FILE            Fichier de sortie (défaut: bloodhound_TIMESTAMP.json)
-    -c, --collection METHOD      Méthode de collection (défaut: All)
-                                 Valeurs: All, DCOnly, Session, LoggedOn, Trusts, ACL, Group
-    --zip-only                   Supprime les fichiers JSON après création du ZIP
-    --port PORT                  Port LDAP (défaut: 389 pour LDAP, 636 pour LDAPS)
-    --ldaps                      Utilise LDAPS (TLS) - équivalent à --port 636
-    --no-tls                     Force LDAP sans TLS même sur port 636
-    -v, --verbose                Mode verbeux (affiche tous les messages)
-    -h, --help                   Affiche cette aide
+Optional options:
+    -u, --ldapuser USERNAME          Username
+    -p, --ldappassword PASSWORD      Password user
+    -f, --ldapfqdn FQDN          LDAP server / Domain Controller
+    -o, --output FILE            Output file (default: bloodhound_TIMESTAMP.json)
+    -c, --collection METHOD      Collection method (default: All)
+                                 Values: All, DCOnly, Session, LoggedOn, Trusts, ACL, Group
+    --zip-only                   Delete JSON files after creating the ZIP
+    --port PORT                  LDAP port (default: 389 for LDAP, 636 for LDAPS)
+    --ldaps                      Use LDAPS (TLS) - equivalent to --port 636
+    --no-tls                     Force LDAP without TLS even on port 636
+    -v, --verbose                Verbose mode (display all messages)
+    -h, --help                   Display this help
 
 Collection Methods:
-    All       - Collecte toutes les données (par défaut)
-    DCOnly    - Collecte uniquement depuis le DC (pas de sessions)
-    Session   - Collecte uniquement les sessions
-    Trusts    - Collecte uniquement les trusts
-    ACL       - Collecte uniquement les ACLs
-    Group     - Collecte uniquement les appartenances aux groupes
+    All       - Collect all data (default)
+    DCOnly    - Collect only from the DC (no sessions)
+    Session   - Collect only sessions
+    Trusts    - Collect only trusts
+    ACL       - Collect only ACLs
+    Group     - Collect only group memberships
 
 EOF
 }
@@ -121,7 +121,7 @@ parse_arguments() {
                 exit 0
                 ;;
             *)
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Option inconnue: $1" >&2
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Unknown option: $1" >&2
                 show_usage
                 exit 1
                 ;;
@@ -130,9 +130,9 @@ parse_arguments() {
     
     if [ -z "$DOMAIN" ]; then
         echo "" >&2
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Le paramètre -d (domain) est obligatoire" >&2
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: The -d (domain) parameter is required" >&2
         echo "" >&2
-        echo "Pour plus d'informations, utilisez '--help'." >&2
+        echo "For more information, use '--help'." >&2
         exit 1
     fi
     
@@ -212,7 +212,7 @@ main() {
     
     # Verify connection was successful
     if [ -z "$LDAP_FD" ] || [ "$LDAP_FD" = "" ]; then
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Impossible de se connecter au serveur LDAP" >&2
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Unable to connect to the LDAP server" >&2
         exit 1
     fi
     
@@ -324,7 +324,7 @@ main() {
             ;;
         # Unknown method: fallback to minimal collection
         *)
-            echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Méthode de collection inconnue, utilisation de 'All'" >&2
+            echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Unknown collection method, use of 'All'" >&2
             if [ "$VERBOSE" = "true" ]; then
                 collector_init_domain "$DOMAIN" 2>&1
                 collect_users 2>&1 || true
@@ -413,7 +413,7 @@ main() {
                 
                 echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $zip_filename created!"
                 echo ""
-                echo -e "${bashhound_color}BashHound-CE${reset} Enumeration Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
+                echo -e "${bashhound_color}BashHound-CE${reset} Collection completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
                 
                 # Cleanup temporary collection files
                 rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
@@ -425,28 +425,28 @@ main() {
                     rm -f "${created_files[@]}"
                 fi
             else
-                echo "[!] WARN: Échec de la création du ZIP, fichiers JSON conservés" >&2
+                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Failed to create the ZIP, JSON files remain" >&2
                 for file in "${created_files[@]}"; do
                     local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
                     echo "      - $file ($file_size octets)"
                 done
             fi
         else
-            echo "[!] WARN: 'zip' non trouvé, fichiers JSON individuels conservés" >&2
+            echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: 'zip' not found, individual JSON files remain" >&2
             echo "═══════════════════════════════════════════════════════════"
-            echo "[+] Collecte terminée avec succès !"
-            echo "    Fichiers créés :"
+            echo "[+] Collection completed successfully!"
+            echo "    Created files:"
             for file in "${created_files[@]}"; do
                 local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
                 echo "      - $file ($file_size octets)"
             done
             echo "═══════════════════════════════════════════════════════════"
             echo ""
-            echo "Vous pouvez maintenant importer ces fichiers dans BloodHound."
-            echo "Installez 'zip' pour créer automatiquement une archive."
+            echo "You can now import these files into BloodHound."
+            echo "Install 'zip' to automatically create a ZIP archive."
         fi
     else
-        echo "[!] WARN: Aucune donnée collectée" >&2
+        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: No data collected" >&2
         echo "═══════════════════════════════════════════════════════════"
     fi
 }
