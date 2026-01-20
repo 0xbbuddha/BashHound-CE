@@ -33,6 +33,34 @@ COLLECTION_METHOD="All"    # Collection method (All, DCOnly, Session, etc.)
 ZIP_ONLY=false             # Delete JSON files after creating ZIP
 VERBOSE=false              # Enable verbose/debug output
 
+# Logging functions for consistent output formatting
+log_info() {
+    local module="$1"
+    local message="$2"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ') INFO  bashhound_ce::${module}] ${message}"
+}
+
+log_warn() {
+    local module="$1"
+    local message="$2"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ') WARN  bashhound_ce::${module}] ${message}" >&2
+}
+
+log_error() {
+    local module="$1"
+    local message="$2"
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ') ERROR bashhound_ce::${module}] ${message}" >&2
+}
+
+show_banner() {
+    local timestamp=$(date '+%H:%M:%S on %m/%d/%y')
+    echo "---------------------------------------------------"
+    echo "Initializing BashHound-CE at ${timestamp}"
+    echo "Powered by @0xbbuddha"
+    echo "---------------------------------------------------"
+    echo ""
+}
+
 show_usage() {
     cat <<EOF
 BashHound-CE - BloodHound Community Edition collector in pure Bash
@@ -121,7 +149,7 @@ parse_arguments() {
                 exit 0
                 ;;
             *)
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Unknown option: $1" >&2
+                log_error "main" "Unknown option: $1"
                 show_usage
                 exit 1
                 ;;
@@ -130,7 +158,7 @@ parse_arguments() {
     
     if [ -z "$DOMAIN" ]; then
         echo "" >&2
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: The -d (domain) parameter is required" >&2
+        log_error "main" "The -d (domain) parameter is required"
         echo "" >&2
         echo "For more information, use '--help'." >&2
         exit 1
@@ -142,10 +170,10 @@ parse_arguments() {
 }
 
 ################################################################################
-# Display the BashHound-CE ASCII banner with colors
+# Display the BashHound-CE ASCII banner with colors (non-verbose mode)
 # Uses 24-bit RGB colors for modern terminal support
 ################################################################################
-show_banner() {
+show_ascii_banner() {
     local bashhound_color='\033[38;2;0;229;142m'  # Cyan/green
     local ce_color='\033[38;2;255;165;0m'         # Orange
     local author_color='\033[38;2;207;51;246m'    # Purple
@@ -172,25 +200,35 @@ show_banner() {
 # 6. Create ZIP archive
 ################################################################################
 main() {
-    show_banner
+    # Show ASCII banner first (always shown, even with errors)
+    show_ascii_banner
     
-    # Parse command-line arguments and validate required parameters
+    # Parse command-line arguments
     parse_arguments "$@"
+    
+    # Show simple banner in verbose mode (RustHound style)
+    if [ "$VERBOSE" = "true" ]; then
+        show_banner
+    fi
     
     # Auto-enable LDAPS if port 636 is specified
     if [ "$LDAP_PORT" = "636" ] && [ "$USE_LDAPS" = "false" ]; then
         USE_LDAPS=true
     fi
     
-    # Determine protocol for display
-    local protocol="LDAP"
-    if [ "$USE_LDAPS" = "true" ]; then
-        protocol="LDAPS (TLS)"
-    fi
+    # Display verbosity level
+    log_info "main" "Verbosity level: $([ "$VERBOSE" = "true" ] && echo "Debug" || echo "Info")"
+    log_info "main" "Collection method: $COLLECTION_METHOD"
     
-    # Display configuration
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Verbosity level: $([ "$VERBOSE" = "true" ] && echo "Debug" || echo "Info")"
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Connecting to $DOMAIN Active Directory..."
+    # Auto-detect LDAP server (DC) if not provided
+    if [ -z "$LDAP_SERVER" ]; then
+        # Try SRV record lookup first
+        LDAP_SERVER=$(host -t SRV "_ldap._tcp.$DOMAIN" 2>/dev/null | grep "has SRV record" | head -1 | awk '{print $NF}' | sed 's/\.$//')
+        # Fallback to domain name if SRV lookup fails
+        if [ -z "$LDAP_SERVER" ]; then
+            LDAP_SERVER="$DOMAIN"
+        fi
+    fi
     
     # Prepare TLS flag for ldap_connect
     local use_tls="false"
@@ -212,7 +250,7 @@ main() {
     
     # Verify connection was successful
     if [ -z "$LDAP_FD" ] || [ "$LDAP_FD" = "" ]; then
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Unable to connect to the LDAP server" >&2
+        log_error "ldap" "Unable to connect to the LDAP server"
         exit 1
     fi
     
@@ -237,13 +275,15 @@ main() {
     
     # Check authentication result
     if [ $? -ne 0 ]; then
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] ERROR: Authentication failed" >&2
+        log_error "ldap" "Authentication failed"
         ldap_disconnect
         exit 1
     fi
     
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Connected to $DOMAIN Active Directory!"
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting data collection..."
+    local domain_upper=$(echo "$DOMAIN" | tr '[:lower:]' '[:upper:]')
+    log_info "ldap" "Connected to $domain_upper Active Directory!"
+    log_info "ldap" "Starting data collection..."
+    log_info "ldap" "Ldap filter : (objectClass=*)"
     
     local raw_data=""
     
@@ -324,7 +364,7 @@ main() {
             ;;
         # Unknown method: fallback to minimal collection
         *)
-            echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Unknown collection method, use of 'All'" >&2
+            log_warn "main" "Unknown collection method, use of 'All'"
             if [ "$VERBOSE" = "true" ]; then
                 collector_init_domain "$DOMAIN" 2>&1
                 collect_users 2>&1 || true
@@ -335,7 +375,7 @@ main() {
             ;;
     esac
     
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] All data collected for NamingContext DC=$(echo "$DOMAIN" | tr '.' ',DC=')"
+    log_info "ldap" "All data collected for NamingContext DC=$(echo "$DOMAIN" | tr '.' ',DC=')"
     
     # Close LDAP connection - data collection is complete
     ldap_unbind 2>&1 | grep -v "INFO:" >&2
@@ -345,7 +385,7 @@ main() {
     # Parse collected data from temporary files and export to BloodHound CE
     # compatible JSON files (v6 format)
     # -------------------------------------------------------------------------
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Starting the LDAP objects parsing..."
+    log_info "export" "Starting the LDAP objects parsing..."
     
     local output_prefix="bloodhound"
     # export_create_json_files returns list of created files
@@ -378,7 +418,7 @@ main() {
     local certtemplates_count=$([ -f "$certtemplates_file" ] && jq '.meta.count' "$certtemplates_file" 2>/dev/null || echo 0)
     local enterprisecas_count=$([ -f "$enterprisecas_file" ] && jq '.meta.count' "$enterprisecas_file" 2>/dev/null || echo 0)
     
-    echo "[$(date '+%Y-%m-%dT%H:%M:%S')] Parsing LDAP objects finished!"
+    log_info "export" "Parsing LDAP objects finished!"
     
     # -------------------------------------------------------------------------
     # CREATE ZIP ARCHIVE
@@ -391,29 +431,29 @@ main() {
         if command -v zip >/dev/null 2>&1; then
             zip -q "$zip_filename" "${created_files[@]}" 2>/dev/null
             if [ $? -eq 0 ]; then
-                local bashhound_color='\033[38;2;0;229;142m'
-                local reset='\033[0m'
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $users_count users parsed!"
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $groups_count groups parsed!"
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $computers_count computers parsed!"
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $ous_count ous parsed!"
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $domains_count domains parsed!"
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $gpos_count gpos parsed!"
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $containers_count containers parsed!"
-                [ "$certtemplates_count" -gt 0 ] && echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $certtemplates_count certificate templates parsed!"
-                [ "$enterprisecas_count" -gt 0 ] && echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $enterprisecas_count enterprise CAs parsed!"
+                log_info "export" "$users_count users parsed!"
+                log_info "export" "$groups_count groups parsed!"
+                log_info "export" "$computers_count computers parsed!"
+                log_info "export" "$ous_count ous parsed!"
+                log_info "export" "$domains_count domains parsed!"
+                log_info "export" "$gpos_count gpos parsed!"
+                log_info "export" "$containers_count containers parsed!"
+                [ "$certtemplates_count" -gt 0 ] && log_info "export" "$certtemplates_count certtemplates parsed!"
+                [ "$enterprisecas_count" -gt 0 ] && log_info "export" "$enterprisecas_count enterprisecas parsed!"
                 
                 # Count trusts only from the newly created domain file
                 if [ -f "$domains_file" ]; then
                     local trusts_count=$(jq '[.data[].Trusts | length] | add // 0' "$domains_file" 2>/dev/null || echo 0)
                     if [ "$trusts_count" != "null" ] && [ "$trusts_count" -gt 0 ] 2>/dev/null; then
-                        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $trusts_count domain trust(s) found!"
+                        log_info "export" "$trusts_count domain trust(s) found!"
                     fi
                 fi
                 
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] $zip_filename created!"
+                log_info "export" "$zip_filename created!"
                 echo ""
-                echo -e "${bashhound_color}BashHound-CE${reset} Collection completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
+                local bashhound_color='\033[38;2;0;229;142m'
+                local reset='\033[0m'
+                echo -e "${bashhound_color}BashHound-CE${reset} Enumeration Completed at $(date '+%H:%M:%S on %m/%d/%y')! Happy Graphing!"
                 
                 # Cleanup temporary collection files
                 rm -f "/tmp/bashhound_users_$$" "/tmp/bashhound_groups_$$" "/tmp/bashhound_computers_$$" \
@@ -425,14 +465,14 @@ main() {
                     rm -f "${created_files[@]}"
                 fi
             else
-                echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: Failed to create the ZIP, JSON files remain" >&2
+                log_warn "export" "Failed to create the ZIP, JSON files remain"
                 for file in "${created_files[@]}"; do
                     local file_size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
                     echo "      - $file ($file_size octets)"
                 done
             fi
         else
-            echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: 'zip' not found, individual JSON files remain" >&2
+            log_warn "export" "'zip' not found, individual JSON files remain"
             echo "═══════════════════════════════════════════════════════════"
             echo "[+] Collection completed successfully!"
             echo "    Created files:"
@@ -446,7 +486,7 @@ main() {
             echo "Install 'zip' to automatically create a ZIP archive."
         fi
     else
-        echo "[$(date '+%Y-%m-%dT%H:%M:%S')] WARN: No data collected" >&2
+        log_warn "export" "No data collected"
         echo "═══════════════════════════════════════════════════════════"
     fi
 }
