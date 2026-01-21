@@ -150,7 +150,7 @@ collect_users() {
     echo "INFO: Collecte des utilisateurs..." >&2
     
     local filter="(objectClass=user)"
-    local attributes="distinguishedName,sAMAccountName,objectSid,primaryGroupID,userAccountControl,servicePrincipalName,lastLogon,lastLogonTimestamp,pwdLastSet,whenCreated,description,adminCount,displayName,mail,title,homeDirectory,scriptPath,msDS-SupportedEncryptionTypes,sIDHistory,msDS-AllowedToDelegateTo,nTSecurityDescriptor"
+    local attributes="distinguishedName,sAMAccountName,objectSid,primaryGroupID,userAccountControl,servicePrincipalName,lastLogon,lastLogonTimestamp,pwdLastSet,whenCreated,description,adminCount,displayName,mail,title,homeDirectory,scriptPath,msDS-SupportedEncryptionTypes,sIDHistory,msDS-AllowedToDelegateTo,isDeleted,nTSecurityDescriptor"
     
     local results=$(ldap_search "$DOMAIN_DN" 2 "$filter" "$attributes")
     
@@ -197,6 +197,8 @@ collect_users() {
             local supported_enc_types=$(extract_attribute_value "$line" "msDS-SupportedEncryptionTypes")
             local allowed_to_delegate=$(extract_multi_valued_attribute "$line" "msDS-AllowedToDelegateTo")
             local sid_history=$(extract_sidhistory "$line")
+            local is_deleted=$(extract_attribute_value "$line" "isDeleted")
+            local is_acl_protected=$(extract_is_acl_protected "$line")
             
             local spns=$(extract_multi_valued_attribute "$line" "servicePrincipalName")
             
@@ -226,7 +228,7 @@ collect_users() {
             fi
             
             if [ -n "$dn" ] && [ -n "$sid" ]; then
-                echo "$dn|$sam|$sid|$primary_gid|$description|$when_created|$last_logon|$last_logon_ts|$pwd_last_set|$uac|$admin_count|$spns|$display_name|$email|$title|$home_directory|$logon_script|$supported_enc_types|$allowed_to_delegate|$sid_history" >> "$COLLECTED_USERS"
+                echo "$dn|$sam|$sid|$primary_gid|$description|$when_created|$last_logon|$last_logon_ts|$pwd_last_set|$uac|$admin_count|$spns|$display_name|$email|$title|$home_directory|$logon_script|$supported_enc_types|$allowed_to_delegate|$sid_history|$is_deleted|$is_acl_protected" >> "$COLLECTED_USERS"
                 
                 local aces=$(extract_aces_from_ldap_response "$line")
                 if [ -n "$aces" ]; then

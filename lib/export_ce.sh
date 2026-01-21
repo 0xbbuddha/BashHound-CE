@@ -329,7 +329,7 @@ export_create_json_files() {
         local users_data=()
         local user_count=0
         
-        while IFS='|' read -r dn sam sid primary_gid description when_created last_logon last_logon_ts pwd_last_set uac admin_count spns display_name email title home_directory logon_script supported_enc_types allowed_to_delegate sid_history; do
+        while IFS='|' read -r dn sam sid primary_gid description when_created last_logon last_logon_ts pwd_last_set uac admin_count spns display_name email title home_directory logon_script supported_enc_types allowed_to_delegate sid_history is_deleted is_acl_protected; do
             if [ -n "$sam" ]; then
                 local domain_sid=$(echo "$sid" | sed 's/-[0-9]*$//')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
@@ -398,6 +398,12 @@ export_create_json_files() {
                 local admin_count_bool="false"
                 if [ "$admin_count" = "1" ]; then
                     admin_count_bool="true"
+                fi
+                
+                # Convert isDeleted to boolean
+                local is_deleted_bool="false"
+                if [ "$is_deleted" = "TRUE" ] || [ "$is_deleted" = "true" ] || [ "$is_deleted" = "1" ]; then
+                    is_deleted_bool="true"
                 fi
                 
                 [ -z "$when_created" ] && when_created="-1"
@@ -470,13 +476,13 @@ export_create_json_files() {
                 users_data+=("$(cat <<USEREOF
 {
   "ObjectIdentifier": "$sid",
-  "IsDeleted": false,
-  "IsACLProtected": false,
+  "IsDeleted": $is_deleted_bool,
+  "IsACLProtected": $is_acl_protected,
   "Properties": {
     "domain": "$domain_upper",
     "name": "$user_name_upper",
     "domainsid": "$domain_sid",
-    "isaclprotected": false,
+    "isaclprotected": $is_acl_protected,
     "distinguishedname": "$dn_upper",
     "highvalue": $high_value,
     "description": $desc_json,

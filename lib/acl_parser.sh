@@ -404,6 +404,94 @@ map_access_mask_to_right() {
     return 1
 }
 
+################################################################################
+# extract_is_acl_protected - Check if DACL inheritance is blocked
+#
+# Extracts the SE_DACL_PROTECTED flag (0x1000) from Security Descriptor Control flags
+#
+# Args:
+#   $1: LDAP hex response containing nTSecurityDescriptor
+#
+# Returns:
+#   "true" if ACL protected, "false" otherwise
+################################################################################
+extract_is_acl_protected() {
+    local hex="$1"
+    
+    local ntsd_hex="6e54536563757269747944657363726970746f72"
+    
+    if [[ ! "$hex" =~ $ntsd_hex ]]; then
+        echo "false"
+        return 0
+    fi
+    
+    if [[ "$hex" =~ $ntsd_hex(.+) ]]; then
+        local after="${BASH_REMATCH[1]}"
+        local tag="${after:0:2}"
+        
+        if [ "$tag" = "31" ]; then
+            local len_byte="${after:2:2}"
+            local len=$((16#$len_byte))
+            local offset=4
+            
+            if [ $len -gt 127 ]; then
+                if [ "$len_byte" = "84" ]; then
+                    offset=12
+                elif [ "$len_byte" = "82" ]; then
+                    offset=8
+                elif [ "$len_byte" = "81" ]; then
+                    offset=6
+                fi
+            fi
+            
+            after="${after:offset}"
+            tag="${after:0:2}"
+            
+            if [ "$tag" = "04" ]; then
+                local len_byte="${after:2:2}"
+                local len=$((16#$len_byte))
+                local offset=4
+                
+                if [ $len -gt 127 ]; then
+                    if [ "$len_byte" = "84" ]; then
+                        offset=12
+                    elif [ "$len_byte" = "82" ]; then
+                        offset=8
+                    elif [ "$len_byte" = "81" ]; then
+                        offset=6
+                    fi
+                fi
+                
+                # Extract Security Descriptor binary data
+                if [ $len -ge 10 ]; then
+                    local sd_hex="${after:offset:20}"
+                    
+                    # Security Descriptor format (little-endian):
+                    # Byte 0: Revision (01)
+                    # Byte 1: Sbz1 (00)
+                    # Bytes 2-3: Control flags (little-endian word)
+                    # The SE_DACL_PROTECTED flag is 0x1000 (bit 12)
+                    
+                    # Extract control flags (bytes 2-3, little-endian)
+                    if [ ${#sd_hex} -ge 8 ]; then
+                        local control_byte1="${sd_hex:4:2}"  # Low byte
+                        local control_byte2="${sd_hex:6:2}"  # High byte
+                        local control=$((16#${control_byte2}${control_byte1}))
+                        
+                        # Check SE_DACL_PROTECTED flag (0x1000)
+                        if (( control & 0x1000 )); then
+                            echo "true"
+                            return 0
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+    
+    echo "false"
+}
+
 extract_aces_from_ldap_response() {
     local hex="$1"
     
