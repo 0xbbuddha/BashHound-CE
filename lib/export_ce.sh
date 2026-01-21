@@ -637,7 +637,7 @@ export_create_json_files() {
   "UnconstrainedDelegation": $uac_trusted_for_delegation,
   "DomainSID": "$domain_sid",
   "Aces": $aces_json,
-  "AllowedToDelegate": $allowed_delegate_json,
+  "AllowedToDelegate": [],
   "ContainedBy": $contained_by,
   "HasSIDHistory": $sidhistory_json
 }
