@@ -788,8 +788,8 @@ extract_multivalued_attribute() {
 extract_sidhistory() {
     local ldap_response="$1"
     
-    # sIDHistory in hex: 7349444869737436f7279 (sIDHistory)
-    local attr_hex="7349444869737436f7279"
+    # sIDHistory in hex: 734944486973746f7279 (sIDHistory)
+    local attr_hex="734944486973746f7279"
     
     if [[ ! "$ldap_response" =~ $attr_hex ]]; then
         echo ""
@@ -816,24 +816,32 @@ extract_sidhistory() {
             fi
         fi
         
-        # Extract all SIDs from the SET
+        # Extract all SIDs from the SET (with safety limit)
         local total_parsed=0
-        while [ $total_parsed -lt $((set_len * 2)) ] && [[ "$remaining" =~ ^04([0-9a-f]{2})([0-9a-f]+) ]]; do
-            local sid_len_hex="${BASH_REMATCH[1]}"
-            local sid_len=$((16#$sid_len_hex))
-            remaining="${BASH_REMATCH[2]}"
-            
-            if [ $sid_len -ge 8 ] && [ $sid_len -le 68 ]; then
-                local sid_hex="${remaining:0:$((sid_len * 2))}"
-                local sid=$(convert_sid_hex_to_string "$sid_hex")
-                if [ -n "$sid" ] && [[ "$sid" =~ ^S-1- ]]; then
-                    sids+=("$sid")
+        local max_iterations=100  # Safety limit to prevent infinite loops
+        local iteration=0
+        
+        while [ $total_parsed -lt $((set_len * 2)) ] && [ $iteration -lt $max_iterations ] && [ -n "$remaining" ]; do
+            if [[ "$remaining" =~ ^04([0-9a-f]{2})([0-9a-f]+) ]]; then
+                local sid_len_hex="${BASH_REMATCH[1]}"
+                local sid_len=$((16#$sid_len_hex))
+                local after_len="${BASH_REMATCH[2]}"
+                
+                if [ $sid_len -ge 8 ] && [ $sid_len -le 68 ] && [ ${#after_len} -ge $((sid_len * 2)) ]; then
+                    local sid_hex="${after_len:0:$((sid_len * 2))}"
+                    local sid=$(convert_sid_hex_to_string "$sid_hex" 2>/dev/null)
+                    if [ -n "$sid" ] && [[ "$sid" =~ ^S-1- ]]; then
+                        sids+=("$sid")
+                    fi
+                    remaining="${after_len:$((sid_len * 2))}"
+                    total_parsed=$((total_parsed + 4 + sid_len * 2))
+                else
+                    break
                 fi
-                remaining="${remaining:$((sid_len * 2))}"
-                total_parsed=$((total_parsed + 4 + sid_len * 2))
             else
                 break
             fi
+            ((iteration++))
         done
     fi
     
