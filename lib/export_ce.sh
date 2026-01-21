@@ -512,6 +512,11 @@ export_create_json_files() {
                     is_deleted_bool="true"
                 fi
                 
+                # Ensure is_acl_protected has a default value
+                if [ -z "$is_acl_protected" ]; then
+                    is_acl_protected="false"
+                fi
+                
                 [ -z "$when_created" ] && when_created="-1"
                 [ -z "$last_logon" ] && last_logon="-1"
                 [ -z "$last_logon_ts" ] && last_logon_ts="-1"

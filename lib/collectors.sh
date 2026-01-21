@@ -252,7 +252,8 @@ collect_users() {
     local domain_upper=$(echo "$DOMAIN_NAME" | tr '[:lower:]' '[:upper:]')
     
     # NT AUTHORITY (S-1-5-20 = NETWORK SERVICE)
-    echo "|NT AUTHORITY|${domain_upper}-S-1-5-20|0|||-1|-1|-1|-1|0|0|" >> "$COLLECTED_USERS"
+    # Format: dn|sam|sid|primary_gid|description|when_created|last_logon|last_logon_ts|pwd_last_set|uac|admin_count|spns|display_name|email|title|home_directory|logon_script|supported_enc_types|allowed_to_delegate|sid_history|is_deleted|is_acl_protected
+    echo "|NT AUTHORITY|${domain_upper}-S-1-5-20|0|||-1|-1|-1|-1|0|0|||||||0|||false" >> "$COLLECTED_USERS"
     ((count++))
     
     echo "INFO: $count utilisateurs collectés et parsés" >&2
