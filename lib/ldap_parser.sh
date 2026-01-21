@@ -399,19 +399,39 @@ extract_filetime_timestamp() {
     
     local attr_hex=$(printf '%s' "$attr_name" | xxd -p | tr -d '\n')
     
-    # Format: attrName + 31 + (84 00 00 00 XX | XX) + 04 + YY + GeneralizedTime
-    # GeneralizedTime format: "20250729113919.0Z" (17 chars)
+    # Format: attrName + 31 + (84 00 00 00 XX | XX) + 04 + YY + data
     if [[ "$hex" =~ ${attr_hex}(31[0-9a-f]{2}|3184[0-9a-f]{8})04([0-9a-f]{2})([0-9a-f]+) ]]; then
         local str_len_hex="${BASH_REMATCH[2]}"
         local str_len=$((16#$str_len_hex))
         local remaining="${BASH_REMATCH[3]}"
         
-        if [ $str_len -ge 15 ] && [ $str_len -le 20 ]; then
-            # Extract GeneralizedTime string (e.g., "20250729113919.0Z")
-            local time_hex="${remaining:0:$((str_len * 2))}"
-            local time_str=$(echo -n "$time_hex" | xxd -r -p 2>/dev/null)
+        # Extract data
+        local time_hex="${remaining:0:$((str_len * 2))}"
+        local time_str=$(echo -n "$time_hex" | xxd -r -p 2>/dev/null)
+        
+        # Try FILETIME format first (Windows 64-bit: 100-nanosecond intervals since 1601)
+        # Format: decimal number as ASCII string (e.g., "1343133436280505137570")
+        if [[ "$time_str" =~ ^[0-9]+$ ]] && [ ${#time_str} -ge 15 ]; then
+            # Convert FILETIME to Unix timestamp
+            # Unix epoch = (FILETIME / 10000000) - 11644473600
+            # 11644473600 = seconds between 1601-01-01 and 1970-01-01
+            local filetime="$time_str"
             
-            # Parse: YYYYMMDDHHmmss.?Z
+            # Handle very large numbers with bc if available, otherwise use awk
+            if command -v bc &>/dev/null; then
+                local unix_ts=$(echo "scale=0; ($filetime / 10000000) - 11644473600" | bc 2>/dev/null)
+            else
+                local unix_ts=$(awk -v ft="$filetime" 'BEGIN { printf "%.0f", (ft / 10000000) - 11644473600 }' 2>/dev/null)
+            fi
+            
+            if [ -n "$unix_ts" ] && [ "$unix_ts" -gt 0 ]; then
+                echo "$unix_ts"
+                return
+            fi
+        fi
+        
+        # Try GeneralizedTime format (e.g., "20250729113919.0Z")
+        if [ $str_len -ge 15 ] && [ $str_len -le 20 ]; then
             if [[ "$time_str" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2}) ]]; then
                 local year="${BASH_REMATCH[1]}"
                 local month="${BASH_REMATCH[2]}"
@@ -751,6 +771,77 @@ extract_multivalued_attribute() {
     fi
     
     echo ""
+}
+
+################################################################################
+# extract_sidhistory - Extract SID History from sIDHistory attribute
+#
+# sIDHistory is a multi-valued attribute containing binary SIDs
+# Each value is a SID in binary format (similar to objectSid)
+#
+# Args:
+#   $1: LDAP hex response containing sIDHistory attribute
+#
+# Returns:
+#   Pipe-separated list of SIDs (e.g., "S-1-5-21-...|S-1-5-21-...") or empty string
+################################################################################
+extract_sidhistory() {
+    local ldap_response="$1"
+    
+    # sIDHistory in hex: 7349444869737436f7279 (sIDHistory)
+    local attr_hex="7349444869737436f7279"
+    
+    if [[ ! "$ldap_response" =~ $attr_hex ]]; then
+        echo ""
+        return 0
+    fi
+    
+    local sids=()
+    local after_attr="${ldap_response#*$attr_hex}"
+    
+    # Parse SET of binary SIDs
+    # Format: 31 [length] (04 [sid_length] [binary_sid])+
+    if [[ "$after_attr" =~ ^31([0-9a-f]{2})([0-9a-f]+) ]]; then
+        local set_len_hex="${BASH_REMATCH[1]}"
+        local set_len=$((16#$set_len_hex))
+        local remaining="${BASH_REMATCH[2]}"
+        
+        # Handle long form length
+        if [ $set_len -ge 128 ]; then
+            local num_bytes=$((set_len - 128))
+            if [ $num_bytes -ge 1 ] && [ $num_bytes -le 4 ]; then
+                set_len_hex="${remaining:0:$((num_bytes*2))}"
+                set_len=$((16#$set_len_hex))
+                remaining="${remaining:$((num_bytes*2))}"
+            fi
+        fi
+        
+        # Extract all SIDs from the SET
+        local total_parsed=0
+        while [ $total_parsed -lt $((set_len * 2)) ] && [[ "$remaining" =~ ^04([0-9a-f]{2})([0-9a-f]+) ]]; do
+            local sid_len_hex="${BASH_REMATCH[1]}"
+            local sid_len=$((16#$sid_len_hex))
+            remaining="${BASH_REMATCH[2]}"
+            
+            if [ $sid_len -ge 8 ] && [ $sid_len -le 68 ]; then
+                local sid_hex="${remaining:0:$((sid_len * 2))}"
+                local sid=$(convert_sid_hex_to_string "$sid_hex")
+                if [ -n "$sid" ] && [[ "$sid" =~ ^S-1- ]]; then
+                    sids+=("$sid")
+                fi
+                remaining="${remaining:$((sid_len * 2))}"
+                total_parsed=$((total_parsed + 4 + sid_len * 2))
+            else
+                break
+            fi
+        done
+    fi
+    
+    if [ ${#sids[@]} -gt 0 ]; then
+        IFS='|'; echo "${sids[*]}"
+    else
+        echo ""
+    fi
 }
 
 ################################################################################

@@ -150,7 +150,7 @@ collect_users() {
     echo "INFO: Collecte des utilisateurs..." >&2
     
     local filter="(objectClass=user)"
-    local attributes="distinguishedName,sAMAccountName,objectSid,primaryGroupID,userAccountControl,servicePrincipalName,lastLogon,lastLogontimestamp,pwdLastSet,whenCreated,description,adminCount,nTSecurityDescriptor"
+    local attributes="distinguishedName,sAMAccountName,objectSid,primaryGroupID,userAccountControl,servicePrincipalName,lastLogon,lastLogonTimestamp,pwdLastSet,whenCreated,description,adminCount,displayName,mail,title,homeDirectory,scriptPath,msDS-SupportedEncryptionTypes,sIDHistory,msDS-AllowedToDelegateTo,nTSecurityDescriptor"
     
     local results=$(ldap_search "$DOMAIN_DN" 2 "$filter" "$attributes")
     
@@ -178,7 +178,7 @@ collect_users() {
             local description=$(extract_attribute_value "$line" "description")
             local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
             local last_logon=$(extract_filetime_timestamp "$line" "lastLogon")
-            local last_logon_ts=$(extract_filetime_timestamp "$line" "lastLogontimestamp")
+            local last_logon_ts=$(extract_filetime_timestamp "$line" "lastLogonTimestamp")
             local pwd_last_set=$(extract_filetime_timestamp "$line" "pwdLastSet")
             local uac=$(extract_uac_flags "$line")
             
@@ -187,6 +187,16 @@ collect_users() {
                 [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: User $sam - whenCreated=$when_created, primaryGID=$primary_gid, UAC=$uac" >&2
             fi
             local admin_count=$(extract_attribute_value "$line" "adminCount")
+            
+            # Extract additional user attributes
+            local display_name=$(extract_attribute_value "$line" "displayName")
+            local email=$(extract_attribute_value "$line" "mail")
+            local title=$(extract_attribute_value "$line" "title")
+            local home_directory=$(extract_attribute_value "$line" "homeDirectory")
+            local logon_script=$(extract_attribute_value "$line" "scriptPath")
+            local supported_enc_types=$(extract_attribute_value "$line" "msDS-SupportedEncryptionTypes")
+            local allowed_to_delegate=$(extract_multi_valued_attribute "$line" "msDS-AllowedToDelegateTo")
+            local sid_history=$(extract_sidhistory "$line")
             
             local spns=$(extract_multi_valued_attribute "$line" "servicePrincipalName")
             
@@ -216,7 +226,7 @@ collect_users() {
             fi
             
             if [ -n "$dn" ] && [ -n "$sid" ]; then
-                echo "$dn|$sam|$sid|$primary_gid|$description|$when_created|$last_logon|$last_logon_ts|$pwd_last_set|$uac|$admin_count|$spns" >> "$COLLECTED_USERS"
+                echo "$dn|$sam|$sid|$primary_gid|$description|$when_created|$last_logon|$last_logon_ts|$pwd_last_set|$uac|$admin_count|$spns|$display_name|$email|$title|$home_directory|$logon_script|$supported_enc_types|$allowed_to_delegate|$sid_history" >> "$COLLECTED_USERS"
                 
                 local aces=$(extract_aces_from_ldap_response "$line")
                 if [ -n "$aces" ]; then
@@ -325,7 +335,7 @@ collect_computers() {
     echo "INFO: Collecte des ordinateurs..." >&2
     
     local filter="(objectClass=computer)"
-    local attributes="distinguishedName,sAMAccountName,dNSHostName,objectSid,operatingSystem,servicePrincipalName,userAccountControl,lastLogon,lastLogontimestamp,pwdLastSet,whenCreated,description,primaryGroupID,nTSecurityDescriptor"
+    local attributes="distinguishedName,sAMAccountName,dNSHostName,objectSid,operatingSystem,servicePrincipalName,userAccountControl,lastLogon,lastLogonTimestamp,pwdLastSet,whenCreated,description,primaryGroupID,nTSecurityDescriptor"
     
     local results=$(ldap_search "$DOMAIN_DN" 2 "$filter" "$attributes")
     
@@ -348,7 +358,7 @@ collect_computers() {
             local operating_system=$(extract_attribute_value "$line" "operatingSystem")
             local when_created=$(extract_filetime_timestamp "$line" "whenCreated")
             local last_logon=$(extract_filetime_timestamp "$line" "lastLogon")
-            local last_logon_ts=$(extract_filetime_timestamp "$line" "lastLogontimestamp")
+            local last_logon_ts=$(extract_filetime_timestamp "$line" "lastLogonTimestamp")
             local pwd_last_set=$(extract_filetime_timestamp "$line" "pwdLastSet")
             local uac=$(extract_uac_flags "$line")
             

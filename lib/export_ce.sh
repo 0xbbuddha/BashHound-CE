@@ -17,6 +17,12 @@
 #   * bloodhound_gpos_*.json
 #   * bloodhound_ous_*.json
 #   * bloodhound_containers_*.json
+#   * bloodhound_certtemplates_*.json
+#   * bloodhound_enterpriseca_*.json
+#   * bloodhound_ntauthstores_*.json
+#   * bloodhound_aiacas_*.json
+#   * bloodhound_rootcas_*.json
+#   * bloodhound_issuancepolicies_*.json
 #
 # Key features:
 # - High-value group detection (well-known SIDs + adminCount)
@@ -310,6 +316,7 @@ parse_gplinks() {
 export_create_json_files() {
     local domain="$1"
     local output_prefix="$2"
+    local version="${3:-dev}"
     
     local users_file="/tmp/bashhound_users_$$"
     local groups_file="/tmp/bashhound_groups_$$"
@@ -322,7 +329,7 @@ export_create_json_files() {
         local users_data=()
         local user_count=0
         
-        while IFS='|' read -r dn sam sid primary_gid description when_created last_logon last_logon_ts pwd_last_set uac admin_count spns; do
+        while IFS='|' read -r dn sam sid primary_gid description when_created last_logon last_logon_ts pwd_last_set uac admin_count spns display_name email title home_directory logon_script supported_enc_types allowed_to_delegate sid_history; do
             if [ -n "$sam" ]; then
                 local domain_sid=$(echo "$sid" | sed 's/-[0-9]*$//')
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
@@ -398,6 +405,65 @@ export_create_json_files() {
                 [ -z "$last_logon_ts" ] && last_logon_ts="-1"
                 [ -z "$pwd_last_set" ] && pwd_last_set="-1"
                 
+                # Build supported encryption types array
+                local supported_enc_json="[]"
+                if [ -n "$supported_enc_types" ] && [ "$supported_enc_types" != "0" ]; then
+                    local enc_array=()
+                    local enc_val=$((supported_enc_types))
+                    # Windows encryption type flags
+                    (( enc_val & 1 )) && enc_array+=("\"DES-CBC-CRC\"")
+                    (( enc_val & 2 )) && enc_array+=("\"DES-CBC-MD5\"")
+                    (( enc_val & 4 )) && enc_array+=("\"RC4-HMAC\"")
+                    (( enc_val & 8 )) && enc_array+=("\"AES128-CTS-HMAC-SHA1-96\"")
+                    (( enc_val & 16 )) && enc_array+=("\"AES256-CTS-HMAC-SHA1-96\"")
+                    if [ ${#enc_array[@]} -gt 0 ]; then
+                        supported_enc_json="[$(IFS=,; echo "${enc_array[*]}")]"
+                    fi
+                fi
+                
+                # Build allowed to delegate array
+                local allowed_delegate_json="[]"
+                if [ -n "$allowed_to_delegate" ]; then
+                    local delegate_array=()
+                    IFS='|' read -ra delegates <<< "$allowed_to_delegate"
+                    for spn in "${delegates[@]}"; do
+                        if [ -n "$spn" ]; then
+                            local spn_escaped=$(printf '%s' "$spn" | jq -Rs .)
+                            delegate_array+=("$spn_escaped")
+                        fi
+                    done
+                    if [ ${#delegate_array[@]} -gt 0 ]; then
+                        allowed_delegate_json="[$(IFS=,; echo "${delegate_array[*]}")]"
+                    fi
+                fi
+                
+                # Determine if user is high value
+                local high_value="false"
+                if [ "$admin_count_bool" = "true" ]; then
+                    high_value="true"
+                fi
+                # Check for well-known high-value RIDs
+                if [[ "$sid" =~ -500$ ]] || [[ "$sid" =~ -502$ ]]; then  # Administrator, krbtgt
+                    high_value="true"
+                fi
+                
+                # Build SID history array
+                local sidhistory_json="[]"
+                local has_sidhistory="false"
+                if [ -n "$sid_history" ]; then
+                    local sidhistory_array=()
+                    IFS='|' read -ra sids <<< "$sid_history"
+                    for history_sid in "${sids[@]}"; do
+                        if [ -n "$history_sid" ]; then
+                            sidhistory_array+=("\"$history_sid\"")
+                        fi
+                    done
+                    if [ ${#sidhistory_array[@]} -gt 0 ]; then
+                        sidhistory_json="[$(IFS=,; echo "${sidhistory_array[*]}")]"
+                        has_sidhistory="true"
+                    fi
+                fi
+                
                 local aces_json=$(build_aces_json "$sid")
                 local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
                 
@@ -412,7 +478,7 @@ export_create_json_files() {
     "domainsid": "$domain_sid",
     "isaclprotected": false,
     "distinguishedname": "$dn_upper",
-    "highvalue": false,
+    "highvalue": $high_value,
     "description": $desc_json,
     "whencreated": $when_created,
     "sensitive": false,
@@ -427,11 +493,11 @@ export_create_json_files() {
     "pwdlastset": $pwd_last_set,
     "serviceprincipalnames": $spns_json,
     "hasspn": $has_spn,
-    "displayname": "",
-    "email": "",
-    "title": "",
-    "homedirectory": "",
-    "logonscript": "",
+    "displayname": "${display_name:-}",
+    "email": "${email:-}",
+    "title": "${title:-}",
+    "homedirectory": "${home_directory:-}",
+    "logonscript": "${logon_script:-}",
     "useraccountcontrol": ${uac:-0},
     "samaccountname": "$sam",
     "userpassword": "",
@@ -439,18 +505,18 @@ export_create_json_files() {
     "unicodepassword": "",
     "sfupassword": "",
     "admincount": $admin_count_bool,
-    "supportedencryptiontypes": [],
-    "sidhistory": [],
-    "allowedtodelegate": []
+    "supportedencryptiontypes": $supported_enc_json,
+    "sidhistory": $sidhistory_json,
+    "allowedtodelegate": $allowed_delegate_json
   },
   "PrimaryGroupSID": $primary_group_sid,
   "SPNTargets": [],
   "UnconstrainedDelegation": $uac_trusted_for_delegation,
   "DomainSID": "$domain_sid",
   "Aces": $aces_json,
-  "AllowedToDelegate": [],
+  "AllowedToDelegate": $allowed_delegate_json,
   "ContainedBy": $contained_by,
-  "HasSIDHistory": []
+  "HasSIDHistory": $sidhistory_json
 }
 USEREOF
 )")
@@ -472,7 +538,7 @@ USEREOF
     "type": "users",
     "count": $user_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -781,7 +847,7 @@ WKGEOF
     "type": "groups",
     "count": $group_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -949,7 +1015,7 @@ COMPEOF
     "type": "computers",
     "count": $computer_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1137,7 +1203,7 @@ TRUSTEOF
     "type": "domains",
     "count": 1,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1208,7 +1274,7 @@ GPOEOF
     "type": "gpos",
     "count": $gpo_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1290,7 +1356,7 @@ OUEOF
     "type": "ous",
     "count": $ou_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1358,7 +1424,7 @@ CONTAINEREOF
     "type": "containers",
     "count": $container_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1487,7 +1553,7 @@ CERTTEMPLATEEOF
     "type": "certtemplates",
     "count": $certtemplate_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1613,7 +1679,7 @@ ENTERPRISECAEOF
     "type": "enterprisecas",
     "count": $enterpriseca_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1691,7 +1757,7 @@ NTAUTHEOF
     "type": "ntauthstores",
     "count": $ntauthstore_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1784,7 +1850,7 @@ AIACAEOF
     "type": "aiacas",
     "count": $aiaca_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1872,7 +1938,7 @@ ROOTCAEOF
     "type": "rootcas",
     "count": $rootca_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF
@@ -1963,7 +2029,7 @@ ISSUANCEEOF
     "type": "issuancepolicies",
     "count": $issuancepolicy_count,
     "version": 6,
-    "collectorversion": "BashHound-CE v1.0"
+    "collectorversion": "BashHound-CE $version"
   }
 }
 EOF

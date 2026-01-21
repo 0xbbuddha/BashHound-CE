@@ -17,6 +17,38 @@
 
 # Script initialization - determine script location and load libraries
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Detect installed package version from system package manager
+get_package_version() {
+    local version=""
+    
+    # Try Arch Linux / pacman (AUR packages like bashhound-ce-git)
+    if command -v pacman &>/dev/null; then
+        version=$(pacman -Q bashhound-ce-git 2>/dev/null | awk '{print $2}')
+        [ -z "$version" ] && version=$(pacman -Q bashhound-ce 2>/dev/null | awk '{print $2}')
+    fi
+    
+    # Try Debian/Ubuntu / dpkg
+    if [ -z "$version" ] && command -v dpkg &>/dev/null; then
+        version=$(dpkg -l bashhound-ce 2>/dev/null | grep '^ii' | awk '{print $3}')
+        [ -z "$version" ] && version=$(dpkg -l bashhound-ce-git 2>/dev/null | grep '^ii' | awk '{print $3}')
+    fi
+    
+    # Try RPM-based (RedHat/Fedora/CentOS)
+    if [ -z "$version" ] && command -v rpm &>/dev/null; then
+        version=$(rpm -q bashhound-ce 2>/dev/null | sed 's/bashhound-ce-//')
+        [ -z "$version" ] && version=$(rpm -q bashhound-ce-git 2>/dev/null | sed 's/bashhound-ce-git-//')
+    fi
+    
+    # Fallback to "dev" if not installed as package
+    if [ -z "$version" ] || [[ "$version" =~ "not installed" ]]; then
+        version="dev"
+    fi
+    
+    echo "$version"
+}
+
+VERSION=$(get_package_version)
 source "$SCRIPT_DIR/lib/ldap.sh"        # Core LDAP protocol implementation
 source "$SCRIPT_DIR/lib/collectors.sh"  # AD object collectors (users, groups, etc.)
 source "$SCRIPT_DIR/lib/export_ce.sh"   # BloodHound CE JSON export functions
@@ -82,6 +114,7 @@ Optional options:
     --ldaps                      Use LDAPS (TLS) - equivalent to --port 636
     --no-tls                     Force LDAP without TLS even on port 636
     -v, --verbose                Verbose mode (display all messages)
+    -V, --version                Display version information
     -h, --help                   Display this help
 
 Collection Methods:
@@ -143,6 +176,11 @@ parse_arguments() {
             --no-tls)
                 USE_LDAPS=false
                 shift
+                ;;
+            -V|--version)
+                echo "BashHound-CE version $VERSION"
+                echo "by @0xbbuddha"
+                exit 0
                 ;;
             -h|--help)
                 show_usage
@@ -405,7 +443,7 @@ main() {
     
     local output_prefix="bloodhound"
     # export_create_json_files returns list of created files
-    local created_files=($(export_create_json_files "$DOMAIN" "$output_prefix" 2>&1 | grep -v "INFO:"))
+    local created_files=($(export_create_json_files "$DOMAIN" "$output_prefix" "$VERSION" 2>&1 | grep -v "INFO:"))
     
     # -------------------------------------------------------------------------
     # COUNT EXPORTED OBJECTS
