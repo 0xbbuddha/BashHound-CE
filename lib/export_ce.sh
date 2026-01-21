@@ -311,6 +311,92 @@ parse_gplinks() {
     fi
 }
 
+################################################################################
+# resolve_spn_targets - Resolve SPNs to computer SIDs
+#
+# Args:
+#   $1: Pipe-separated list of SPNs (e.g., "ldap/dc.domain.local|http/web.domain.local:80")
+#   $2: Associative array name containing hostname → SID mapping
+#
+# Returns:
+#   JSON array of SPNTarget objects: [{"ComputerSID":"S-1-5-21-...","Port":389},...]
+################################################################################
+resolve_spn_targets() {
+    local spns="$1"
+    local -n hostname_to_sid_ref="$2"
+    
+    if [ -z "$spns" ]; then
+        echo "[]"
+        return 0
+    fi
+    
+    local targets=()
+    IFS='|' read -ra spn_array <<< "$spns"
+    
+    for spn in "${spn_array[@]}"; do
+        if [ -z "$spn" ]; then
+            continue
+        fi
+        
+        # SPN format: service/hostname[:port]
+        # Extract hostname and port
+        local hostname=""
+        local port=""
+        
+        if [[ "$spn" =~ ^[^/]+/([^:]+):([0-9]+)$ ]]; then
+            # service/hostname:port
+            hostname="${BASH_REMATCH[1]}"
+            port="${BASH_REMATCH[2]}"
+        elif [[ "$spn" =~ ^[^/]+/([^:]+)$ ]]; then
+            # service/hostname
+            hostname="${BASH_REMATCH[1]}"
+            # Default ports based on service
+            if [[ "$spn" =~ ^ldap/ ]]; then
+                port="389"
+            elif [[ "$spn" =~ ^ldaps/ ]]; then
+                port="636"
+            elif [[ "$spn" =~ ^http/ ]]; then
+                port="80"
+            elif [[ "$spn" =~ ^https/ ]]; then
+                port="443"
+            else
+                port="0"
+            fi
+        fi
+        
+        # Normalize hostname to lowercase
+        hostname=$(echo "$hostname" | tr '[:upper:]' '[:lower:]')
+        
+        # Remove domain suffix if present (we'll try both with and without)
+        local short_hostname="${hostname%%.*}"
+        
+        # Try to resolve to computer SID
+        local computer_sid=""
+        
+        # Try exact match first
+        if [ -n "${hostname_to_sid_ref[$hostname]:-}" ]; then
+            computer_sid="${hostname_to_sid_ref[$hostname]}"
+        # Try short hostname
+        elif [ -n "${hostname_to_sid_ref[$short_hostname]:-}" ]; then
+            computer_sid="${hostname_to_sid_ref[$short_hostname]}"
+        # Try uppercase version
+        elif [ -n "${hostname_to_sid_ref[${hostname^^}]:-}" ]; then
+            computer_sid="${hostname_to_sid_ref[${hostname^^}]}"
+        fi
+        
+        # Add to targets if resolved
+        if [ -n "$computer_sid" ] && [ -n "$port" ]; then
+            targets+=("{\"ComputerSID\":\"$computer_sid\",\"Port\":$port}")
+        fi
+    done
+    
+    if [ ${#targets[@]} -gt 0 ]; then
+        echo "[$(IFS=,; echo "${targets[*]}")]"
+    else
+        echo "[]"
+    fi
+}
+
 # Crée plusieurs fichiers JSON séparés par type (format officiel BloodHound)
 # Ref: https://bloodhound.specterops.io/integrations/bloodhound-api/json-formats
 export_create_json_files() {
@@ -324,6 +410,26 @@ export_create_json_files() {
     
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local files_created=()
+    
+    # Build hostname → SID mapping from computers for SPN resolution
+    declare -A hostname_to_sid_map
+    if [ -f "$computers_file" ] && [ -s "$computers_file" ]; then
+        while IFS='|' read -r _ comp_sam comp_sid _ _ _ _ _ _ _ _ _ comp_dns _ _ _ _; do
+            if [ -n "$comp_dns" ] && [ -n "$comp_sid" ]; then
+                local dns_lower=$(echo "$comp_dns" | tr '[:upper:]' '[:lower:]')
+                hostname_to_sid_map["$dns_lower"]="$comp_sid"
+                # Also add short hostname (before first dot)
+                local short_dns="${dns_lower%%.*}"
+                hostname_to_sid_map["$short_dns"]="$comp_sid"
+            fi
+            # Also try sAMAccountName without $ suffix
+            if [ -n "$comp_sam" ] && [ -n "$comp_sid" ]; then
+                local sam_clean="${comp_sam%$}"
+                local sam_lower=$(echo "$sam_clean" | tr '[:upper:]' '[:lower:]')
+                hostname_to_sid_map["$sam_lower"]="$comp_sid"
+            fi
+        done < "$computers_file"
+    fi
     
     if [ -f "$users_file" ] && [ -s "$users_file" ]; then
         local users_data=()
@@ -470,6 +576,12 @@ export_create_json_files() {
                     fi
                 fi
                 
+                # Resolve SPNs to computer targets
+                local spn_targets_json="[]"
+                if [ -n "$spns" ]; then
+                    spn_targets_json=$(resolve_spn_targets "$spns" hostname_to_sid_map)
+                fi
+                
                 local aces_json=$(build_aces_json "$sid")
                 local contained_by=$(resolve_contained_by "$dn_upper" "$domain_sid")
                 
@@ -516,7 +628,7 @@ export_create_json_files() {
     "allowedtodelegate": $allowed_delegate_json
   },
   "PrimaryGroupSID": $primary_group_sid,
-  "SPNTargets": [],
+  "SPNTargets": $spn_targets_json,
   "UnconstrainedDelegation": $uac_trusted_for_delegation,
   "DomainSID": "$domain_sid",
   "Aces": $aces_json,
