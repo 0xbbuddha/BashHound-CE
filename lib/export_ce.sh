@@ -442,7 +442,7 @@ export_create_json_files() {
                 local user_name_upper=$(echo "$sam@$domain_upper" | tr '[:lower:]' '[:upper:]')
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 
-                local primary_group_sid="null"
+                local primary_group_sid="\"\""
                 if [ -n "$primary_gid" ] && [ "$primary_gid" != "0" ] && [ "$primary_gid" != "-1" ]; then
                     primary_group_sid="\"${domain_sid}-${primary_gid}\""
                 fi
@@ -653,18 +653,8 @@ USEREOF
             users_json="[${users_data[*]}]"
             
             local users_file_out="${output_prefix}_users_${timestamp}.json"
-            cat > "$users_file_out" <<EOF
-{
-  "data": $users_json,
-  "meta": {
-    "methods": 0,
-    "type": "users",
-    "count": $user_count,
-    "version": 6,
-    "collectorversion": "BashHound-CE $version"
-  }
-}
-EOF
+            # Generate compact JSON (single line) like RustHound for BloodHound compatibility
+            echo "{\"data\":$users_json,\"meta\":{\"methods\":0,\"type\":\"users\",\"count\":$user_count,\"version\":6,\"collectorversion\":\"BashHound-CE $version\"}}" > "$users_file_out"
             files_created+=("$users_file_out")
             echo "INFO: Créé $users_file_out ($user_count users)" >&2
         fi
@@ -991,7 +981,7 @@ EOF
                 local domain_upper=$(echo "$domain" | tr '[:lower:]' '[:upper:]')
                 local dn_upper=$(echo "$dn" | tr '[:lower:]' '[:upper:]')
                 
-                local primary_group_sid="null"
+                local primary_group_sid="\"\""
                 if [ -n "$primary_gid" ] && [ "$primary_gid" != "0" ] && [ "$primary_gid" != "-1" ]; then
                     primary_group_sid="\"${domain_sid}-${primary_gid}\""
                 fi
