@@ -331,7 +331,7 @@ resolve_spn_targets() {
     fi
     
     local targets=()
-    IFS='|' read -ra spn_array <<< "$spns"
+    IFS=';' read -ra spn_array <<< "$spns"
     
     for spn in "${spn_array[@]}"; do
         if [ -z "$spn" ]; then
@@ -451,7 +451,7 @@ export_create_json_files() {
                 local has_spn="false"
                 if [ -n "$spns" ]; then
                     local spn_objs=()
-                    IFS='|' read -ra spn_array <<< "$spns"
+                    IFS=';' read -ra spn_array <<< "$spns"
                     for spn in "${spn_array[@]}"; do
                         if [ -n "$spn" ]; then
                             local spn_escaped=$(printf '%s' "$spn" | jq -Rs .)
@@ -542,7 +542,7 @@ export_create_json_files() {
                 local allowed_delegate_json="[]"
                 if [ -n "$allowed_to_delegate" ]; then
                     local delegate_array=()
-                    IFS='|' read -ra delegates <<< "$allowed_to_delegate"
+                    IFS=';' read -ra delegates <<< "$allowed_to_delegate"
                     for spn in "${delegates[@]}"; do
                         if [ -n "$spn" ]; then
                             local spn_escaped=$(printf '%s' "$spn" | jq -Rs .)
@@ -569,7 +569,7 @@ export_create_json_files() {
                 local has_sidhistory="false"
                 if [ -n "$sid_history" ]; then
                     local sidhistory_array=()
-                    IFS='|' read -ra sids <<< "$sid_history"
+                    IFS=';' read -ra sids <<< "$sid_history"
                     for history_sid in "${sids[@]}"; do
                         if [ -n "$history_sid" ]; then
                             sidhistory_array+=("\"$history_sid\"")

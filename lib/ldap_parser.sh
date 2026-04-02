@@ -91,22 +91,33 @@ EOF
 
 extract_dn_from_response() {
     local hex="$1"
-    
+
+    # SearchResultEntry tag = 0x64, followed by BER-encoded length:
+    #   6484xxxxxxxx  -> 4-byte length (>= 16 MB, very rare)
+    #   6483xxxxxx    -> 3-byte length (65 536 – 16 777 215 bytes)
+    #   6482xxxx      -> 2-byte length (256 – 65 535 bytes) — most common for AD objects with nTSecurityDescriptor
+    #   6481xx        -> 1-byte length (128 – 255 bytes)
+    # After the length bytes, the DN is encoded as: 04 <1-byte-len> <DN bytes>
+
     if [[ "$hex" =~ 6484[0-9a-f]{8}04([0-9a-f]{2}) ]]; then
-        local dn_len_hex="${BASH_REMATCH[1]}"
-        local dn_len=$((16#$dn_len_hex))
-        
+        local dn_len=$((16#${BASH_REMATCH[1]}))
         if [[ "$hex" =~ 6484[0-9a-f]{8}04[0-9a-f]{2}([0-9a-f]+) ]]; then
-            local dn_hex="${BASH_REMATCH[1]:0:$((dn_len * 2))}"
-            echo "$dn_hex" | xxd -r -p 2>/dev/null || echo ""
+            echo "${BASH_REMATCH[1]:0:$((dn_len * 2))}" | xxd -r -p 2>/dev/null || echo ""
+        fi
+    elif [[ "$hex" =~ 6483[0-9a-f]{6}04([0-9a-f]{2}) ]]; then
+        local dn_len=$((16#${BASH_REMATCH[1]}))
+        if [[ "$hex" =~ 6483[0-9a-f]{6}04[0-9a-f]{2}([0-9a-f]+) ]]; then
+            echo "${BASH_REMATCH[1]:0:$((dn_len * 2))}" | xxd -r -p 2>/dev/null || echo ""
+        fi
+    elif [[ "$hex" =~ 6482[0-9a-f]{4}04([0-9a-f]{2}) ]]; then
+        local dn_len=$((16#${BASH_REMATCH[1]}))
+        if [[ "$hex" =~ 6482[0-9a-f]{4}04[0-9a-f]{2}([0-9a-f]+) ]]; then
+            echo "${BASH_REMATCH[1]:0:$((dn_len * 2))}" | xxd -r -p 2>/dev/null || echo ""
         fi
     elif [[ "$hex" =~ 6481[0-9a-f]{2}04([0-9a-f]{2}) ]]; then
-        local dn_len_hex="${BASH_REMATCH[1]}"
-        local dn_len=$((16#$dn_len_hex))
-        
+        local dn_len=$((16#${BASH_REMATCH[1]}))
         if [[ "$hex" =~ 6481[0-9a-f]{2}04[0-9a-f]{2}([0-9a-f]+) ]]; then
-            local dn_hex="${BASH_REMATCH[1]:0:$((dn_len * 2))}"
-            echo "$dn_hex" | xxd -r -p 2>/dev/null || echo ""
+            echo "${BASH_REMATCH[1]:0:$((dn_len * 2))}" | xxd -r -p 2>/dev/null || echo ""
         fi
     fi
 }

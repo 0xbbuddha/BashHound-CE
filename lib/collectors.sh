@@ -228,7 +228,10 @@ collect_users() {
             fi
             
             if [ -n "$dn" ] && [ -n "$sid" ]; then
-                echo "$dn|$sam|$sid|$primary_gid|$description|$when_created|$last_logon|$last_logon_ts|$pwd_last_set|$uac|$admin_count|$spns|$display_name|$email|$title|$home_directory|$logon_script|$supported_enc_types|$allowed_to_delegate|$sid_history|$is_deleted|$is_acl_protected" >> "$COLLECTED_USERS"
+                local spns_safe="${spns//|/;}"
+                local delegate_safe="${allowed_to_delegate//|/;}"
+                local sidhist_safe="${sid_history//|/;}"
+                echo "$dn|$sam|$sid|$primary_gid|$description|$when_created|$last_logon|$last_logon_ts|$pwd_last_set|$uac|$admin_count|$spns_safe|$display_name|$email|$title|$home_directory|$logon_script|$supported_enc_types|$delegate_safe|$sidhist_safe|$is_deleted|$is_acl_protected" >> "$COLLECTED_USERS"
                 
                 local aces=$(extract_aces_from_ldap_response "$line")
                 if [ -n "$aces" ]; then
