@@ -351,14 +351,14 @@ ldap_receive_message() {
         local num_octets=$((length_byte & 0x7f))
         [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: Longueur forme longue sur $num_octets octets" >&2
         local length_hex=$(dd bs=1 count=$num_octets <&$read_fd 2>/dev/null | xxd -p | tr -d '\n')
-        
         if [ -z "$length_hex" ]; then
             echo "ERROR: Impossible de lire les octets de longueur" >&2
             return 1
         fi
-        
+
+        [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG: length_hex_raw=$length_hex" >&2
         response+="$length_hex"
-        
+
         length_hex=$(echo "$length_hex" | sed 's/^0*//')
         if [ -z "$length_hex" ]; then
             length_hex="0"
@@ -528,19 +528,30 @@ ldap_search() {
             echo "ERROR: Échec de réception de la réponse Search" >&2
             break
         fi
-        
-        if [[ "$response" =~ 64 ]]; then
+
+        # Identify message type from application tag at byte 9 (position 18 in hex)
+        # Format: 30 84 LLLLLLLL 02 01 MM TT ...
+        # where MM=messageID (1 byte), TT=application tag
+        local app_tag="${response:18:2}"
+        [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG_SEARCH: app_tag=$app_tag len=${#response} hex=${response:0:30}" >&2
+
+        if [ "$app_tag" = "64" ]; then
+            # SearchResultEntry
             results+=("$response")
-        elif [[ "$response" =~ 65 ]]; then
+        elif [ "$app_tag" = "65" ]; then
+            # SearchResultDone
             done=true
-            
-            if [[ "$response" =~ 65.{2,}020100 ]]; then
+            local result_code="${response:28:2}"
+            if [ "$result_code" = "00" ]; then
                 echo "INFO: Recherche terminée avec succès (${#results[@]} résultats)" >&2
             else
-                echo "WARN: Recherche terminée avec erreur" >&2
+                echo "WARN: Recherche terminée avec erreur (code=0x$result_code)" >&2
             fi
+        elif [ "$app_tag" = "73" ]; then
+            # SearchResultReference - ignore referrals
+            [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG_SEARCH: referral ignoré" >&2
         else
-            echo "WARN: Type de réponse inconnu" >&2
+            echo "WARN: Type de réponse inconnu (tag=$app_tag)" >&2
             done=true
         fi
     done

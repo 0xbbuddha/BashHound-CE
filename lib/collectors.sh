@@ -160,9 +160,10 @@ collect_users() {
     fi
     
     > "$COLLECTED_USERS"
-    
+
     local count=0
     while IFS= read -r line; do
+        [ "$LDAP_DEBUG" = "true" ] && echo "DEBUG_USER_LINE: len=${#line} hex=${line:0:100}" >&2
         if [ -n "$line" ] && [[ "$line" =~ ^308 ]]; then
             local dn=$(extract_dn_from_response "$line")
             local sam=$(extract_sam_from_response "$line")
